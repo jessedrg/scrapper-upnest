@@ -694,7 +694,8 @@ class CompleteWorkflowManager {
       openRoles_descriptions: companyJobs.map(job => job.description || '').filter(Boolean).join('\n\n'),
       personCity: decisionMaker.location?.split(',').map(s => s.trim())[0],
       personCountry: decisionMaker.location?.split(',').map(s => s.trim()).pop(),
-      industry: companyJobs[0]?.industry || ''
+      industry: companyJobs[0]?.industry || '',
+      jobPostUrls: companyJobs.map(job => job.linkedInUrl).filter(Boolean) as string[]
     };
   }
 
@@ -743,12 +744,13 @@ class CompleteWorkflowManager {
       );
       if (!dm || !dm.email) return;
 
-      const domain = this.extractDomain(lead.companyName);
-      const jobs = domainMap.get(domain) || [];
-      const jobUrl = jobs[0]?.linkedInUrl || lead.companyName;
-      const key = this.buildKey(jobUrl, dm.email);
+      // Check if ANY of the job post URLs for this lead+email are new
+      const jobUrls = lead.jobPostUrls || [];
+      const hasNewJob = jobUrls.length === 0 
+        ? !processedKeys.has(this.buildKey(lead.companyName, dm.email))
+        : jobUrls.some(url => !processedKeys.has(this.buildKey(url, dm.email)));
 
-      if (!processedKeys.has(key)) {
+      if (hasNewJob) {
         newLeads.push(lead);
       }
     });
@@ -834,9 +836,12 @@ class CompleteWorkflowManager {
       }).join(',');
       fs.appendFileSync(csvPath, row + '\n');
 
-      // Mark dedup immediately
-      const jobUrl = companyJobs[0]?.linkedInUrl || lead.companyName;
-      this.appendProcessedKeys([this.buildKey(jobUrl, dm?.email || '')]);
+      // Mark dedup immediately — one key per job post URL
+      const jobUrls = lead.jobPostUrls && lead.jobPostUrls.length > 0
+        ? lead.jobPostUrls
+        : [lead.companyName];
+      const dedupKeys = jobUrls.map(url => this.buildKey(url, dm?.email || ''));
+      this.appendProcessedKeys(dedupKeys);
 
       instantlyBatch.push(record);
       generated++;

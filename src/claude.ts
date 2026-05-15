@@ -39,6 +39,7 @@ interface MergedLead {
   openRoles_locations?: string;
   openRoles_descriptions?: string;
   openRoles_count?: string;
+  jobPostUrls?: string[];
 }
 
 function truncate(s: string | undefined, n: number): string {
