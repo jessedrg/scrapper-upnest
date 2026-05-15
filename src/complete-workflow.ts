@@ -30,6 +30,10 @@ interface JobPost {
   employment_type?: string;
   industry?: string;
   description?: string;
+  companyDescription?: string;
+  companyEmployeesCount?: string;
+  seniorityLevel?: string;
+  jobFunction?: string;
 }
 
 interface DecisionMaker {
@@ -349,7 +353,11 @@ class CompleteWorkflowManager {
       posted_date: job.postedAt || job.posted_date || '',
       employment_type: job.employmentType || job.contractType || '',
       industry: Array.isArray(job.industries) ? job.industries.join(', ') : (job.industries || job.industry || ''),
-      description: job.descriptionText || job.description || ''
+      description: job.descriptionText || job.description || '',
+      companyDescription: job.companyDescription || '',
+      companyEmployeesCount: job.companyEmployeesCount ? String(job.companyEmployeesCount) : '',
+      seniorityLevel: job.seniorityLevel || '',
+      jobFunction: job.jobFunction || ''
     }));
 
     await this.saveToCSV(processedJobs, 'linkedin_jobs.csv');
@@ -753,15 +761,18 @@ class CompleteWorkflowManager {
       lastName: decisionMaker.lastName,
       title: decisionMaker.jobTitle,
       companyName: decisionMaker.companyName,
+      companyDescription: companyJobs[0]?.companyDescription || '',
+      companyEmployeesCount: companyJobs[0]?.companyEmployeesCount || '',
+      companyIndustries: companyJobs[0]?.industry || '',
+      industry: companyJobs[0]?.industry || '',
       openRoles_titles: companyJobs.map(job => job.title).join(' | '),
-      openRoles_seniority: 'senior',
-      openRoles_function: this.extractFunctionFromTitles(companyJobs.map(job => job.title)),
+      openRoles_seniority: companyJobs.map(job => job.seniorityLevel).filter(Boolean).join(' | ') || 'senior',
+      openRoles_function: companyJobs.map(job => job.jobFunction).filter(Boolean).join(' | ') || this.extractFunctionFromTitles(companyJobs.map(job => job.title)),
       openRoles_locations: companyJobs.map(job => job.location).join(' | '),
       openRoles_count: companyJobs.length.toString(),
-      openRoles_descriptions: companyJobs.slice(0, 3).map(job => (job.description || '').slice(0, 500)).filter(Boolean).join('\n\n'),
+      openRoles_descriptions: companyJobs.slice(0, 3).map(job => (job.description || '').slice(0, 1200)).filter(Boolean).join('\n---\n'),
       personCity: decisionMaker.location?.split(',').map(s => s.trim())[0],
       personCountry: decisionMaker.location?.split(',').map(s => s.trim()).pop(),
-      industry: companyJobs[0]?.industry || '',
       jobPostUrls: companyJobs.map(job => job.linkedInUrl).filter(Boolean) as string[]
     };
   }
@@ -857,9 +868,22 @@ class CompleteWorkflowManager {
     let generated = 0;
     const instantlyBatch: InstantlyRecord[] = [];
     const BATCH_SIZE = 50;
+    const jobPostContactCount = new Map<string, number>();
 
     for (let i = 0; i < limitedLeads.length; i++) {
       const lead = limitedLeads[i];
+
+      // Max 2 contacts per company per job post per run
+      const leadJobUrls = lead.jobPostUrls || [];
+      const jobKey = leadJobUrls.length > 0 
+        ? leadJobUrls.map(u => `${lead.companyName.toLowerCase().trim()}__${u}`).join('|')
+        : lead.companyName.toLowerCase().trim();
+      const currentCount = jobPostContactCount.get(jobKey) || 0;
+      if (currentCount >= 2) {
+        console.log(`   ⏭️  Skipping ${lead.firstName} @ ${lead.companyName} (2 contacts already sent for this job post)`);
+        continue;
+      }
+
       console.log(`📧 ${i + 1}/${limitedLeads.length}: ${lead.firstName} ${lead.lastName} @ ${lead.companyName}`);
 
       const prompt = buildOutreachPrompt(lead);
@@ -914,6 +938,7 @@ class CompleteWorkflowManager {
       this.appendProcessedKeys(dedupKeys);
 
       instantlyBatch.push(record);
+      jobPostContactCount.set(jobKey, (jobPostContactCount.get(jobKey) || 0) + 1);
       generated++;
 
       // Push to Instantly in batches

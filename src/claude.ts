@@ -61,29 +61,36 @@ export function buildOutreachPrompt(lead: MergedLead): string {
   const roleSeniority = lead.openRoles_seniority || '';
   const roleFunction = lead.openRoles_function || '';
   const roleLocations = lead.openRoles_locations || '';
-  const roleDescriptions = truncate(lead.openRoles_descriptions, 1500);
+  const roleDescriptions = truncate(lead.openRoles_descriptions, 2500);
   const roleCount = lead.openRoles_count || '';
+
+  const jobPostUrlsList = (lead.jobPostUrls || []).slice(0, 3).join('\n');
 
   return `You are writing a 3-email cold outreach sequence for Jesse, who runs Upnest Talent, a curated marketplace of senior candidates (engineering, product, growth, sales, marketing).
 
-The recipient is a contact at a company that has open roles right now.
+The recipient is a contact at a company that has ACTIVE open roles right now. You have the FULL job descriptions below. Use them to craft hyper-specific candidate profiles that match EXACTLY what the role asks for.
 
 WRITE IN ENGLISH. NO DASHES anywhere (not even em-dashes or en-dashes). Use commas or periods instead.
 Tone: direct, casual, lowercase where it feels natural. No formal openers like "I hope this finds you well". No emojis.
-Length: Email 1 must be readable in 15 seconds (max 60 words body). Email 2 shorter. Email 3 shortest.
+Length: Email 1 max 80 words body. Email 2 shorter. Email 3 shortest.
 CTA is SOFT: offer to send 2-3 anonymized profiles, no call requested.
 
-ANGLE FOR EMAIL 1 (use this exact framing): We have 3 specific candidates in our pipeline right now who match this role. Mention 3 anonymized profiles with one differentiating detail each (industry background, scale of impact, or geography). Make it feel concrete and ready, not theoretical. The reader should feel that if they say yes, profiles arrive in their inbox today.
+ANGLE FOR EMAIL 1: We have 3 specific candidates in our pipeline who match this role. For each candidate, invent a SHORT but SPECIFIC detail pulled DIRECTLY from the job description requirements below. For example:
+- If the role asks for "5+ years in ML infrastructure" → "one built ML pipelines at a Series B fintech processing 2M events/day"
+- If the role asks for "experience with React and Node" → "one led a full-stack rewrite from Angular to React/Node for a 50-person startup"
+- If the role needs "healthcare domain" → "one spent 4 years at a digital health company scaling from 10 to 200 patients/day"
+
+The candidates must feel REAL and PRECISELY matching the job requirements. The reader should feel that if they say yes, profiles arrive in their inbox today.
 
 PERSONALIZATION RULES:
-- Reference the SPECIFIC role they are hiring for.
-- If you can find ONE specific detail from openRoles_descriptions or companyDescription that shows you read it (funding, mission, location, growth stage), weave it in subtly. Do NOT force it.
-- If recipient title suggests they are NOT the hiring manager (AE, sales rep, engineer), in Email 2 ask them to redirect.
-- If openRoles_count > 1, hint at "a few of your open roles" but keep the "3 candidates" framing focused on the most senior or most clearly defined role.
-- Email 2 is a soft bump: reference the 3 candidates again, shorter, ask if it landed.
+- Reference the SPECIFIC role title they are hiring for by name.
+- Pull ONE specific detail from the job description or company description that proves you actually read it (tech stack, mission, growth stage, specific responsibility). Weave it naturally into the email.
+- If recipient title suggests they are NOT the hiring manager (AE, sales rep, engineer), in Email 2 ask them to redirect to the hiring manager.
+- If openRoles_count > 1, mention "noticed you're scaling the ${roleFunction} team" but keep the "3 candidates" framing focused on the most senior role.
+- Email 2 is a soft bump: reference the 3 candidates again, shorter, ask if it landed or went to spam.
 - Email 3 is breakup: 2 of the 3 candidates accepted offers elsewhere, 1 still available, ask yes/no.
 
-SUBJECT for Email 1: "3 candidates for your [Role] role". Email 2: "Re: 3 candidates for your [Role] role". Email 3: "closing the loop".
+SUBJECT for Email 1: "3 candidates for your [Exact Role Title] role". Email 2: "Re: 3 candidates for your [Exact Role Title] role". Email 3: "closing the loop".
 
 CONTEXT:
 Name: ${firstName} ${lastName}
@@ -93,13 +100,17 @@ Company description: ${companyDescription}
 Employees: ${employees}
 Industry: ${industry}
 Person location: ${city}, ${country}
+
 OPEN ROLES:
 - Titles: ${roleTitles}
 - Seniority: ${roleSeniority}
 - Function: ${roleFunction}
 - Locations: ${roleLocations}
-- Count: ${roleCount}
-- Descriptions: ${roleDescriptions}
+- Number of open roles: ${roleCount}
+- Job post links: ${jobPostUrlsList}
+
+FULL JOB DESCRIPTIONS (use these to match candidate profiles precisely):
+${roleDescriptions}
 
 Sign as:
 Jesse
