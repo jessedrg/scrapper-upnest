@@ -455,7 +455,7 @@ class CompleteWorkflowManager {
 
     console.log(`📧 Step 4: Verifying ${emails.length} emails...`);
 
-    // Try mails.so first, fallback to Apify
+    // Try mails.so only; if it fails, skip verification and continue
     let results: any[] | null = null;
 
     if (this.MAILS_API_KEY) {
@@ -463,11 +463,7 @@ class CompleteWorkflowManager {
     }
 
     if (!results) {
-      results = await this.verifyWithApify(emails);
-    }
-
-    if (!results) {
-      console.log(`   ➡️  All verifiers failed. Continuing with ${decisionMakers.length} emails (unverified)`);
+      console.log(`   ➡️  Verification unavailable. Continuing with ${decisionMakers.length} emails (unverified)`);
       return decisionMakers.filter(dm => dm.email);
     }
 
