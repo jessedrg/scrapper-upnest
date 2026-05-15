@@ -174,27 +174,70 @@ class CompleteWorkflowManager {
   }
 
   /**
-   * Step 1: Scrape LinkedIn jobs by calling the actor directly
+   * Step 1: Scrape LinkedIn jobs using async actor run (no timeout)
    */
   async scrapeJobs(urls: string[] = ALL_URLS, count: number = 10000): Promise<JobPost[]> {
     console.log('📊 Step 1: Scraping LinkedIn jobs...');
     console.log(`🌍 Using ${urls.length} URLs, requesting ${count} jobs`);
     
-    const response = await axios.post(
-      `https://api.apify.com/v2/acts/${this.JOBS_ACTOR}/run-sync-get-dataset-items`,
+    // Step 1a: Start the actor run (async)
+    const startResponse = await axios.post(
+      `https://api.apify.com/v2/acts/${this.JOBS_ACTOR}/runs`,
       {
         urls,
         scrapeCompany: true,
-        count: Math.max(count, 10) // API minimum is 10
+        count: Math.max(count, 10)
       },
       {
         params: { token: this.apifyToken },
         headers: { 'Content-Type': 'application/json' },
-        timeout: 1800000 // 30 min timeout for massive scraping
+        timeout: 30000
       }
     );
 
-    const jobs = Array.isArray(response.data) ? response.data : [];
+    const runId = startResponse.data?.data?.id;
+    const datasetId = startResponse.data?.data?.defaultDatasetId;
+    if (!runId) throw new Error('Failed to start Apify actor run');
+    console.log(`   🏃 Actor run started: ${runId}`);
+
+    // Step 1b: Poll until finished
+    const maxWait = 1800000; // 30 min
+    const pollInterval = 10000; // 10 sec
+    let elapsed = 0;
+
+    while (elapsed < maxWait) {
+      await new Promise(r => setTimeout(r, pollInterval));
+      elapsed += pollInterval;
+
+      const statusResponse = await axios.get(
+        `https://api.apify.com/v2/acts/${this.JOBS_ACTOR}/runs/${runId}`,
+        { params: { token: this.apifyToken }, timeout: 15000 }
+      );
+
+      const status = statusResponse.data?.data?.status;
+      if (status === 'SUCCEEDED') {
+        console.log(`   ✅ Actor finished in ${Math.round(elapsed / 1000)}s`);
+        break;
+      } else if (status === 'FAILED' || status === 'ABORTED' || status === 'TIMED-OUT') {
+        throw new Error(`Apify actor run ${status}`);
+      }
+
+      process.stdout.write(`   ⏳ Running... (${Math.round(elapsed / 1000)}s, status: ${status})\r`);
+    }
+
+    if (elapsed >= maxWait) throw new Error('Apify actor run timed out (30min)');
+
+    // Step 1c: Fetch dataset items
+    console.log(`   📥 Fetching results from dataset...`);
+    const itemsResponse = await axios.get(
+      `https://api.apify.com/v2/datasets/${datasetId}/items`,
+      {
+        params: { token: this.apifyToken, format: 'json' },
+        timeout: 60000
+      }
+    );
+
+    const jobs = Array.isArray(itemsResponse.data) ? itemsResponse.data : [];
 
     const processedJobs: JobPost[] = jobs.map((job: any) => ({
       title: job.title || '',
@@ -260,7 +303,45 @@ class CompleteWorkflowManager {
       requireEmail: true
     });
 
-    const leads = await this.leadsRunner.run();
+    // Use async run + poll (sync times out with large leadCounts)
+    const runInfo = await this.leadsRunner.runAsync();
+    const runId = runInfo.id;
+    const datasetId = runInfo.defaultDatasetId;
+    console.log(`   🏃 Leads Scraper run started: ${runId}`);
+
+    const maxWait = 1800000; // 30 min
+    const pollInterval = 10000;
+    let elapsed = 0;
+
+    while (elapsed < maxWait) {
+      await new Promise(r => setTimeout(r, pollInterval));
+      elapsed += pollInterval;
+
+      const statusResp = await axios.get(
+        `https://api.apify.com/v2/actor-tasks/verifiable_cougar~scrape-desicion-makers/runs/${runId}`,
+        { params: { token: this.apifyToken }, timeout: 15000 }
+      );
+
+      const status = statusResp.data?.data?.status;
+      if (status === 'SUCCEEDED') {
+        console.log(`   ✅ Leads Scraper finished in ${Math.round(elapsed / 1000)}s`);
+        break;
+      } else if (status === 'FAILED' || status === 'ABORTED' || status === 'TIMED-OUT') {
+        throw new Error(`Leads Scraper run ${status}`);
+      }
+
+      process.stdout.write(`   ⏳ Scraping leads... (${Math.round(elapsed / 1000)}s, status: ${status})\r`);
+    }
+
+    if (elapsed >= maxWait) throw new Error('Leads Scraper timed out (30min)');
+
+    // Fetch dataset items
+    console.log(`   📥 Fetching leads from dataset...`);
+    const itemsResp = await axios.get(
+      `https://api.apify.com/v2/datasets/${datasetId}/items`,
+      { params: { token: this.apifyToken, format: 'json' }, timeout: 120000 }
+    );
+    const leads = Array.isArray(itemsResp.data) ? itemsResp.data : [];
     
     const processedLeads: DecisionMaker[] = leads.map(lead => ({
       name: lead.name || '',
