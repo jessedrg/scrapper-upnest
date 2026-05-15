@@ -904,34 +904,46 @@ class CompleteWorkflowManager {
       return;
     }
 
-    try {
-      const response = await axios.post(
-        'https://api.instantly.ai/api/v2/leads/add',
-        {
-          campaign_id: this.INSTANTLY_CAMPAIGN_ID,
-          leads: leads.map(lead => ({
-            email: lead.email,
-            first_name: lead.first_name,
-            last_name: lead.last_name,
-            company_name: lead.company_name,
-            custom_variables: lead.custom_variables
-          }))
-        },
-        {
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${this.INSTANTLY_API_KEY}`
+    const maxRetries = 3;
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        const response = await axios.post(
+          'https://api.instantly.ai/api/v2/leads/add',
+          {
+            campaign_id: this.INSTANTLY_CAMPAIGN_ID,
+            leads: leads.map(lead => ({
+              email: lead.email,
+              first_name: lead.first_name,
+              last_name: lead.last_name,
+              company_name: lead.company_name,
+              custom_variables: lead.custom_variables
+            }))
           },
-          timeout: 30000
-        }
-      );
+          {
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${this.INSTANTLY_API_KEY}`
+            },
+            timeout: 30000
+          }
+        );
 
-      const data = response.data;
-      console.log(`✅ Instantly: ${data.leads_uploaded || leads.length} uploaded, ${data.duplicated_leads || 0} duplicates, ${data.invalid_email_count || 0} invalid`);
-    } catch (err: any) {
-      const errData = err?.response?.data;
-      console.error(`   ❌ Instantly push failed:`, errData || err.message);
+        const data = response.data;
+        console.log(`✅ Instantly: ${data.leads_uploaded || leads.length} uploaded, ${data.duplicated_leads || 0} duplicates, ${data.invalid_email_count || 0} invalid`);
+        return; // Success, exit
+      } catch (err: any) {
+        const httpStatus = err?.response?.status;
+        const errData = err?.response?.data;
+        console.error(`   ❌ Instantly push failed (attempt ${attempt}/${maxRetries}):`, errData || err.message);
+
+        if (attempt < maxRetries && (httpStatus === 429 || httpStatus === 502 || httpStatus === 503 || !httpStatus)) {
+          const delay = attempt * 5000;
+          console.log(`   ⏳ Retrying in ${delay / 1000}s...`);
+          await new Promise(r => setTimeout(r, delay));
+        }
+      }
     }
+    console.error(`   ⚠️  Instantly push failed after ${maxRetries} attempts. Leads are saved in CSV — push manually or re-run.`);
   }
 
   /**
