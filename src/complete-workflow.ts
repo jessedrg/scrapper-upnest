@@ -259,7 +259,7 @@ class CompleteWorkflowManager {
   /**
    * Step 2: Extract company domains
    */
-  private extractCompanyDomains(jobs: JobPost[]): Map<string, JobPost[]> {
+  extractCompanyDomains(jobs: JobPost[]): Map<string, JobPost[]> {
     console.log('🏢 Step 2: Extracting company domains...');
     
     const domainMap = new Map<string, JobPost[]>();
@@ -536,7 +536,7 @@ class CompleteWorkflowManager {
   /**
    * Step 5: Merge jobs and leads data properly
    */
-  private mergeJobsAndLeads(
+  mergeJobsAndLeads(
     decisionMakers: DecisionMaker[], 
     domainMap: Map<string, JobPost[]>
   ): MergedLead[] {
@@ -636,7 +636,7 @@ class CompleteWorkflowManager {
   /**
    * Step 6: Filter out already-processed leads
    */
-  private deduplicateLeads(
+  deduplicateLeads(
     mergedLeads: MergedLead[],
     decisionMakers: DecisionMaker[],
     domainMap: Map<string, JobPost[]>

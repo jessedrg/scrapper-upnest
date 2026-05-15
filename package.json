@@ -12,7 +12,8 @@
     "test": "echo \"Error: no test specified\" && exit 1",
     "workflow": "ts-node --esm examples/main-workflow.ts",
     "scraping": "ts-node --esm examples/scraping-only.ts",
-    "complete": "npx tsx examples/complete-workflow.ts"
+    "complete": "npx tsx examples/complete-workflow.ts",
+    "resume": "npx tsx examples/resume-from-jobs.ts"
   },
   "keywords": [
     "linkedin",
