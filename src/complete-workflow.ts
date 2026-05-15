@@ -473,7 +473,7 @@ class CompleteWorkflowManager {
     );
     const leads = Array.isArray(itemsResp.data) ? itemsResp.data : [];
     
-    const processedLeads: DecisionMaker[] = leads.map(lead => ({
+    const allLeads: DecisionMaker[] = leads.map(lead => ({
       name: lead.name || '',
       firstName: lead.firstName || lead.name?.split(' ')[0] || '',
       lastName: lead.lastName || lead.name?.split(' ').slice(1).join(' ') || '',
@@ -486,6 +486,41 @@ class CompleteWorkflowManager {
       location: lead.location
     }));
 
+    // Sort by seniority: prioritize people most likely to respond and make decisions
+    const SENIORITY_RANK: Record<string, number> = {
+      'c_suite': 1,        // CEO, CTO, Co-Founder
+      'vp': 2,             // VP Talent, VP Engineering
+      'director': 3,       // Director of Recruiting, Dir of Eng
+      'manager': 4,        // Engineering Manager, Hiring Manager
+    };
+    const TITLE_BOOST: string[] = [
+      'talent', 'recruiting', 'people', 'hr', 'human resources',
+      'hiring', 'talent acquisition'
+    ];
+
+    allLeads.sort((a, b) => {
+      const rankA = SENIORITY_RANK[a.seniority || ''] || 99;
+      const rankB = SENIORITY_RANK[b.seniority || ''] || 99;
+      // Boost talent/people/HR titles (they actually handle hiring)
+      const titleA = (a.jobTitle || '').toLowerCase();
+      const titleB = (b.jobTitle || '').toLowerCase();
+      const boostA = TITLE_BOOST.some(kw => titleA.includes(kw)) ? -10 : 0;
+      const boostB = TITLE_BOOST.some(kw => titleB.includes(kw)) ? -10 : 0;
+      return (rankA + boostA) - (rankB + boostB);
+    });
+
+    // Limit to max 2 decision makers per company (top seniority first)
+    const MAX_PER_COMPANY = 2;
+    const companyCount = new Map<string, number>();
+    const processedLeads = allLeads.filter(lead => {
+      const key = lead.companyName.toLowerCase().trim();
+      const count = companyCount.get(key) || 0;
+      if (count >= MAX_PER_COMPANY) return false;
+      companyCount.set(key, count + 1);
+      return true;
+    });
+
+    console.log(`   🔍 Filtered to ${processedLeads.length} leads (max ${MAX_PER_COMPANY} per company, from ${allLeads.length} total)`);
     await this.saveToCSV(processedLeads, 'decision_makers.csv');
     console.log(`✅ Found ${processedLeads.length} decision makers`);
     return processedLeads;
