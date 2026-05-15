@@ -810,6 +810,11 @@ class CompleteWorkflowManager {
         d.companyName.toLowerCase() === lead.companyName.toLowerCase()
       );
 
+      // Use jobPostUrls from MergedLead (set in Step 5), fallback to domainMap
+      const jobUrls = (lead.jobPostUrls && lead.jobPostUrls.length > 0)
+        ? lead.jobPostUrls
+        : companyJobs.map(job => job.linkedInUrl).filter(Boolean) as string[];
+
       const pauseUntil = new Date();
       pauseUntil.setDate(pauseUntil.getDate() + 3);
 
@@ -822,7 +827,7 @@ class CompleteWorkflowManager {
         email1_body: result.email1_body,
         email2_body: result.email2_body,
         email3_body: result.email3_body,
-        jobPostUrls: companyJobs.map(job => job.linkedInUrl).filter(Boolean).join(' ||| '),
+        jobPostUrls: jobUrls.join(' ||| '),
         pause_until: pauseUntil.toISOString(),
         email1_subject: result.email1_subject,
         email2_subject: result.email2_subject,
@@ -837,10 +842,8 @@ class CompleteWorkflowManager {
       fs.appendFileSync(csvPath, row + '\n');
 
       // Mark dedup immediately — one key per job post URL
-      const jobUrls = lead.jobPostUrls && lead.jobPostUrls.length > 0
-        ? lead.jobPostUrls
-        : [lead.companyName];
-      const dedupKeys = jobUrls.map(url => this.buildKey(url, dm?.email || ''));
+      const dedupUrls = jobUrls.length > 0 ? jobUrls : [lead.companyName];
+      const dedupKeys = dedupUrls.map(url => this.buildKey(url, dm?.email || ''));
       this.appendProcessedKeys(dedupKeys);
 
       instantlyBatch.push(record);
