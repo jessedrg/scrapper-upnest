@@ -72,25 +72,32 @@ The recipient is a contact at a company that has ACTIVE open roles right now. Yo
 
 WRITE IN ENGLISH. NO DASHES anywhere (not even em-dashes or en-dashes). Use commas or periods instead.
 Tone: direct, casual, lowercase where it feels natural. No formal openers like "I hope this finds you well". No emojis.
-Length: Email 1 max 45 words body. Email 2 max 30 words. Email 3 max 20 words. Be brutally concise.
+Length: Email 1 max 55 words body (excluding candidate bullets). Email 2 max 25 words. Email 3 max 20 words.
 CTA is SOFT: offer to send 2-3 anonymized profiles, no call requested.
 
-ANGLE FOR EMAIL 1: We have 3 specific candidates in our pipeline who match this role. For each candidate, invent a SHORT but SPECIFIC detail pulled DIRECTLY from the job description requirements below. For example:
-- If the role asks for "5+ years in ML infrastructure" → "one built ML pipelines at a Series B fintech processing 2M events/day"
-- If the role asks for "experience with React and Node" → "one led a full-stack rewrite from Angular to React/Node for a 50-person startup"
-- If the role needs "healthcare domain" → "one spent 4 years at a digital health company scaling from 10 to 200 patients/day"
+STRICT STRUCTURE FOR EMAIL 1:
+Line 1: "hi [firstName], saw you're hiring a [Exact Role Title]" or similar one-liner referencing ONE specific detail from the job description that proves you read it.
+Line 2: "have 3 candidates in our pipeline right now who match:"
+Then 3 bullet lines using commas to separate (NO dashes, NO bullet points, just new lines starting with a comma):
+, [candidate 1: one specific matching detail from job requirements, e.g. industry + scale of impact]
+, [candidate 2: different matching detail, e.g. relevant tech stack + years]
+, [candidate 3: different matching detail, e.g. geography + domain expertise]
+Last line: "want me to send over 2-3 anonymized profiles?"
 
-The candidates must feel REAL and PRECISELY matching the job requirements. The reader should feel that if they say yes, profiles arrive in their inbox today.
+CANDIDATE BULLET RULES:
+- Each bullet must reference a SPECIFIC requirement from the FULL JOB DESCRIPTION below.
+- Make them feel like REAL senior people: mention industry background, scale (users, revenue, team size), or specific tech/domain.
+- NEVER use generic descriptions like "experienced professional" or "strong leader". Be concrete.
+- Keep each bullet to 15-20 words max.
 
-PERSONALIZATION RULES:
-- Reference the SPECIFIC role title they are hiring for by name.
-- Pull ONE specific detail from the job description or company description that proves you actually read it (tech stack, mission, growth stage, specific responsibility). Weave it naturally into the email.
-- If recipient title suggests they are NOT the hiring manager (AE, sales rep, engineer), in Email 2 ask them to redirect to the hiring manager.
-- If openRoles_count > 1, mention "noticed you're scaling the ${roleFunction} team" but keep the "3 candidates" framing focused on the most senior role.
-- Email 2 is a soft bump: reference the 3 candidates again, shorter, ask if it landed or went to spam.
-- Email 3 is breakup: 2 of the 3 candidates accepted offers elsewhere, 1 still available, ask yes/no.
+EMAIL 2: soft bump. "just checking if this landed, still have those 3 profiles ready for your [Role] role. want them?"
+EMAIL 3: breakup. "2 of the 3 accepted offers elsewhere. 1 still available. yes/no?"
 
 SUBJECT for Email 1: "3 candidates for your [Exact Role Title] role". Email 2: "Re: 3 candidates for your [Exact Role Title] role". Email 3: "closing the loop".
+
+PERSONALIZATION:
+- If openRoles_count > 1, pick the MOST senior or clearly defined role for the "3 candidates" angle.
+- If recipient title suggests they are NOT the hiring manager, in Email 2 ask to redirect.
 
 CONTEXT:
 Name: ${firstName} ${lastName}
