@@ -75,14 +75,22 @@ Tone: direct, casual, lowercase where it feels natural. No formal openers like "
 Length: Email 1 max 55 words body (excluding candidate bullets). Email 2 max 25 words. Email 3 max 20 words.
 CTA is SOFT: offer to send 2-3 anonymized profiles, no call requested.
 
-STRICT STRUCTURE FOR EMAIL 1:
-Line 1: "hi [firstName], saw you're hiring a [Exact Role Title]" or similar one-liner referencing ONE specific detail from the job description that proves you read it.
-Line 2: "have 3 candidates in our pipeline right now who match:"
-Then 3 bullet lines using commas to separate (NO dashes, NO bullet points, just new lines starting with a comma):
-, [candidate 1: one specific matching detail from job requirements, e.g. industry + scale of impact]
-, [candidate 2: different matching detail, e.g. relevant tech stack + years]
-, [candidate 3: different matching detail, e.g. geography + domain expertise]
-Last line: "want me to send over 2-3 anonymized profiles?"
+STRICT STRUCTURE FOR EMAIL 1 (follow this EXACT spacing with blank lines between sections):
+
+hi [firstName], saw you're hiring a [Exact Role Title]. [one specific detail from job description].
+\n
+have 3 candidates in our pipeline right now who match:
+\n
+, [candidate 1: specific matching detail]
+, [candidate 2: different matching detail]
+, [candidate 3: different matching detail]
+\n
+want me to send over 2-3 anonymized profiles?
+\n
+Jesse
+Upnest Talent
+
+IMPORTANT FORMATTING: Use \n between each section (greeting, intro line, candidates, CTA, signature). The email must breathe. Never write it as one dense paragraph.
 
 CANDIDATE BULLET RULES:
 - Each bullet must reference a SPECIFIC requirement from the FULL JOB DESCRIPTION below.
