@@ -297,9 +297,50 @@ class CompleteWorkflowManager {
       }
     );
 
-    const jobs = Array.isArray(itemsResponse.data) ? itemsResponse.data : [];
+    const rawJobs = Array.isArray(itemsResponse.data) ? itemsResponse.data : [];
+    console.log(`   📦 Raw jobs from Apify: ${rawJobs.length}`);
 
-    const processedJobs: JobPost[] = jobs.map((job: any) => ({
+    // Filter out staffing agencies, headhunting firms, and companies >500 employees
+    const EXCLUDED_KEYWORDS = [
+      'staffing', 'recruiting', 'recruitment', 'headhunt', 'headhunting',
+      'talent agency', 'talent acquisition firm', 'employment agency',
+      'manpower', 'adecco', 'randstad', 'robert half', 'hays',
+      'kelly services', 'kforce', 'insight global', 'tek systems',
+      'apex group', 'aerotek', 'allegis', 'express employment',
+      'search firm', 'executive search', 'placement', 'temp agency',
+      'contract staffing', 'outsourcing'
+    ];
+
+    const filteredJobs = rawJobs.filter((job: any) => {
+      // Check employee count — exclude >500
+      const empCount = parseInt(job.companyEmployeesCount || '0', 10);
+      if (empCount > 500) return false;
+
+      // Check company name + description for staffing/agency keywords
+      const companyLower = (job.companyName || '').toLowerCase();
+      const descLower = (job.companyDescription || '').toLowerCase();
+      const industryLower = Array.isArray(job.industries)
+        ? job.industries.join(' ').toLowerCase()
+        : (job.industries || '').toLowerCase();
+
+      const isAgency = EXCLUDED_KEYWORDS.some(kw =>
+        companyLower.includes(kw) || industryLower.includes(kw)
+      );
+      if (isAgency) return false;
+
+      // Also check if company slogan/description screams staffing
+      const sloganLower = (job.companySlogan || '').toLowerCase();
+      const isAgencyDesc = EXCLUDED_KEYWORDS.some(kw =>
+        sloganLower.includes(kw) || descLower.includes(kw)
+      );
+      if (isAgencyDesc) return false;
+
+      return true;
+    });
+
+    console.log(`   🔍 After filtering: ${filteredJobs.length} jobs (removed ${rawJobs.length - filteredJobs.length} agencies/large companies)`);
+
+    const processedJobs: JobPost[] = filteredJobs.map((job: any) => ({
       title: job.title || '',
       company: job.companyName || job.company || '',
       location: job.location || '',
