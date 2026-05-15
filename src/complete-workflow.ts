@@ -717,7 +717,7 @@ class CompleteWorkflowManager {
       openRoles_function: this.extractFunctionFromTitles(companyJobs.map(job => job.title)),
       openRoles_locations: companyJobs.map(job => job.location).join(' | '),
       openRoles_count: companyJobs.length.toString(),
-      openRoles_descriptions: companyJobs.map(job => job.description || '').filter(Boolean).join('\n\n'),
+      openRoles_descriptions: companyJobs.slice(0, 3).map(job => (job.description || '').slice(0, 500)).filter(Boolean).join('\n\n'),
       personCity: decisionMaker.location?.split(',').map(s => s.trim())[0],
       personCountry: decisionMaker.location?.split(',').map(s => s.trim()).pop(),
       industry: companyJobs[0]?.industry || '',
