@@ -72,7 +72,7 @@ The recipient is a contact at a company that has ACTIVE open roles right now. Yo
 
 WRITE IN ENGLISH. NO DASHES anywhere (not even em-dashes or en-dashes). Use commas or periods instead.
 Tone: direct, casual, lowercase where it feels natural. No formal openers like "I hope this finds you well". No emojis.
-Length: Email 1 max 80 words body. Email 2 shorter. Email 3 shortest.
+Length: Email 1 max 45 words body. Email 2 max 30 words. Email 3 max 20 words. Be brutally concise.
 CTA is SOFT: offer to send 2-3 anonymized profiles, no call requested.
 
 ANGLE FOR EMAIL 1: We have 3 specific candidates in our pipeline who match this role. For each candidate, invent a SHORT but SPECIFIC detail pulled DIRECTLY from the job description requirements below. For example:
