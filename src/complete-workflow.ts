@@ -210,7 +210,7 @@ class CompleteWorkflowManager {
       elapsed += pollInterval;
 
       const statusResponse = await axios.get(
-        `https://api.apify.com/v2/acts/${this.JOBS_ACTOR}/runs/${runId}`,
+        `https://api.apify.com/v2/actor-runs/${runId}`,
         { params: { token: this.apifyToken }, timeout: 15000 }
       );
 
@@ -318,7 +318,7 @@ class CompleteWorkflowManager {
       elapsed += pollInterval;
 
       const statusResp = await axios.get(
-        `https://api.apify.com/v2/actor-tasks/verifiable_cougar~scrape-desicion-makers/runs/${runId}`,
+        `https://api.apify.com/v2/actor-runs/${runId}`,
         { params: { token: this.apifyToken }, timeout: 15000 }
       );
 
