@@ -763,64 +763,51 @@ class CompleteWorkflowManager {
   }
 
   /**
-   * Step 7: Generate outreach emails with Claude
+   * Step 7+8: Generate outreach emails + write CSV + dedup incrementally
+   * Each email is written to CSV and marked as processed immediately.
+   * If the process crashes mid-way, completed records are preserved.
+   * Pushes to Instantly in batches of 50.
    */
-  async generateOutreachEmails(mergedLeads: MergedLead[], limit: number = 0): Promise<OutreachEmails[]> {
-    console.log('🤖 Step 7: Generating outreach emails with Claude Sonnet...');
-    
+  async generateAndExport(
+    mergedLeads: MergedLead[],
+    domainMap: Map<string, JobPost[]>,
+    decisionMakersMap: Map<string, DecisionMaker>,
+    limit: number = 0
+  ): Promise<number> {
+    console.log('🤖 Step 7+8: Generating emails & writing CSV incrementally...');
+
     const limitedLeads = limit > 0 ? mergedLeads.slice(0, limit) : mergedLeads;
-    const allEmails: OutreachEmails[] = [];
+    const csvPath = path.join(process.cwd(), 'output', 'instantly_campaign.csv');
+    const outputDir = path.dirname(csvPath);
+    if (!fs.existsSync(outputDir)) fs.mkdirSync(outputDir, { recursive: true });
+
+    // Write CSV header
+    const headers = ['lastName','firstName','companyName','jobTitle','linkedIn','email1_body','email2_body','email3_body','jobPostUrls','pause_until','email1_subject','email2_subject','email3_subject'];
+    fs.writeFileSync(csvPath, headers.join(',') + '\n');
+
+    let generated = 0;
+    const instantlyBatch: InstantlyRecord[] = [];
+    const BATCH_SIZE = 50;
 
     for (let i = 0; i < limitedLeads.length; i++) {
       const lead = limitedLeads[i];
-      console.log(`📧 Generating emails for ${i + 1}/${limitedLeads.length}: ${lead.firstName} ${lead.lastName} at ${lead.companyName}`);
-      
+      console.log(`📧 ${i + 1}/${limitedLeads.length}: ${lead.firstName} ${lead.lastName} @ ${lead.companyName}`);
+
       const prompt = buildOutreachPrompt(lead);
       const result = await callClaude(prompt, this.claudeConfig);
-      
+
       if ('error' in result) {
-        console.error(`❌ Claude error for ${lead.companyName}:`, result.error);
+        console.error(`   ❌ Claude error: ${result.error}`);
         continue;
       }
-      
-      allEmails.push(result);
-      console.log(`✅ Generated emails for ${lead.companyName}`);
-      
-      // Small delay to avoid rate limiting
-      await new Promise(resolve => setTimeout(resolve, 1000));
-    }
 
-    console.log(`✅ Generated outreach emails for ${allEmails.length} leads`);
-    return allEmails;
-  }
-
-  /**
-   * Step 8: Create final CSV for Instantly and update dedup registry
-   */
-  async createInstantlyCSV(
-    mergedLeads: MergedLead[],
-    emails: OutreachEmails[],
-    domainMap: Map<string, JobPost[]>,
-    decisionMakersMap: Map<string, DecisionMaker>
-  ): Promise<void> {
-    console.log('📋 Step 8: Creating final Instantly CSV...');
-
-    const newKeys: string[] = [];
-    const instantlyRecords: InstantlyRecord[] = [];
-
-    mergedLeads.slice(0, emails.length).forEach((lead, index) => {
       const domain = this.extractDomain(lead.companyName);
       const companyJobs = domainMap.get(domain) || [];
-      const email = emails[index];
-      // Find DM by matching name + company
-      const dm = Array.from(decisionMakersMap.values()).find(d => 
+      const dm = Array.from(decisionMakersMap.values()).find(d =>
         d.firstName === lead.firstName && d.lastName === lead.lastName &&
         d.companyName.toLowerCase() === lead.companyName.toLowerCase()
       );
-      
-      if (!email) return;
 
-      // Set pause until 3 days from now
       const pauseUntil = new Date();
       pauseUntil.setDate(pauseUntil.getDate() + 3);
 
@@ -830,39 +817,51 @@ class CompleteWorkflowManager {
         companyName: lead.companyName,
         jobTitle: lead.title,
         linkedIn: dm?.linkedIn || '',
-        email1_body: email.email1_body,
-        email2_body: email.email2_body,
-        email3_body: email.email3_body,
+        email1_body: result.email1_body,
+        email2_body: result.email2_body,
+        email3_body: result.email3_body,
         jobPostUrls: companyJobs.map(job => job.linkedInUrl).filter(Boolean).join(' ||| '),
         pause_until: pauseUntil.toISOString(),
-        email1_subject: email.email1_subject,
-        email2_subject: email.email2_subject,
-        email3_subject: email.email3_subject
+        email1_subject: result.email1_subject,
+        email2_subject: result.email2_subject,
+        email3_subject: result.email3_subject
       };
 
-      instantlyRecords.push(record);
+      // Append row to CSV immediately
+      const row = headers.map(h => {
+        const val = String((record as any)[h] || '').replace(/"/g, '""');
+        return `"${val}"`;
+      }).join(',');
+      fs.appendFileSync(csvPath, row + '\n');
 
-      // Collect key for dedup
+      // Mark dedup immediately
       const jobUrl = companyJobs[0]?.linkedInUrl || lead.companyName;
-      newKeys.push(this.buildKey(jobUrl, dm?.email || ''));
-    });
+      this.appendProcessedKeys([this.buildKey(jobUrl, dm?.email || '')]);
 
-    // Append only new keys (O(1) per key, no full rewrite)
-    if (newKeys.length > 0) {
-      this.appendProcessedKeys(newKeys);
+      instantlyBatch.push(record);
+      generated++;
+
+      // Push to Instantly in batches
+      if (instantlyBatch.length >= BATCH_SIZE) {
+        if (this.INSTANTLY_API_KEY && this.INSTANTLY_CAMPAIGN_ID) {
+          await this.pushToInstantly([...instantlyBatch], decisionMakersMap);
+        }
+        instantlyBatch.length = 0;
+      }
+
+      // Rate limit delay
+      await new Promise(r => setTimeout(r, 1000));
     }
+
+    // Push remaining batch
+    if (instantlyBatch.length > 0 && this.INSTANTLY_API_KEY && this.INSTANTLY_CAMPAIGN_ID) {
+      await this.pushToInstantly(instantlyBatch, decisionMakersMap);
+    }
+
     const totalKeys = this.loadProcessedKeys().size;
-    console.log(`💾 Dedup registry: +${newKeys.length} new (${totalKeys} total)`);
-
-    await this.saveToCSV(instantlyRecords, 'instantly_campaign.csv');
-    console.log(`✅ Created ${instantlyRecords.length} final campaign records`);
-
-    // Push to Instantly campaign
-    if (this.INSTANTLY_API_KEY && this.INSTANTLY_CAMPAIGN_ID) {
-      await this.pushToInstantly(instantlyRecords, decisionMakersMap);
-    } else {
-      console.log('   ⚠️  INSTANTLY_API_KEY or INSTANTLY_CAMPAIGN_ID not set. Skipping push.');
-    }
+    console.log(`💾 Dedup registry: +${generated} new (${totalKeys} total)`);
+    console.log(`✅ Generated & exported ${generated} campaign records to ${csvPath}`);
+    return generated;
   }
 
   /**
@@ -976,11 +975,8 @@ class CompleteWorkflowManager {
         return;
       }
 
-      // Step 7: Generate outreach emails
-      const emails = await this.generateOutreachEmails(newLeads, limit);
-
-      // Step 8: Create final CSV + update dedup
-      await this.createInstantlyCSV(newLeads, emails, domainMap, decisionMakersMap);
+      // Step 7+8: Generate emails + write CSV + dedup + Instantly (incremental)
+      const generated = await this.generateAndExport(newLeads, domainMap, decisionMakersMap, limit);
 
       console.log('\n✨ Complete workflow finished successfully!');
       console.log('📁 Output files created:');
@@ -1000,8 +996,8 @@ class CompleteWorkflowManager {
       console.log(`   Verified emails: ${verifiedLeads.length}`);
       console.log(`   Merged leads: ${mergedLeads.length}`);
       console.log(`   New (not duped): ${newLeads.length}`);
-      console.log(`   Emails generated: ${emails.length}`);
-      console.log(`   Final records: ${emails.length}`);
+      console.log(`   Emails generated: ${generated}`);
+      console.log(`   Final records: ${generated}`);
 
     } catch (error) {
       console.error('❌ Complete workflow error:', error);

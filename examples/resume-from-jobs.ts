@@ -68,14 +68,11 @@ async function main() {
   const { leads: newLeads, decisionMakersMap } = (workflow as any).deduplicateLeads(mergedLeads, verifiedLeads, domainMap);
   if (newLeads.length === 0) { console.log('✅ All leads already processed.'); return; }
 
-  // Step 7: Generate outreach (no limit)
-  const emails = await (workflow as any).generateOutreachEmails(newLeads, 0);
-
-  // Step 8: CSV + Instantly
-  await (workflow as any).createInstantlyCSV(newLeads, emails, domainMap, decisionMakersMap);
+  // Step 7+8: Generate + export incrementally
+  const generated = await (workflow as any).generateAndExport(newLeads, domainMap, decisionMakersMap, 0);
 
   console.log('\n✨ Resumed workflow finished!');
-  console.log(`📊 ${jobs.length} jobs → ${decisionMakers.length} DMs → ${verifiedLeads.length} verified → ${newLeads.length} new → ${emails.length} emails`);
+  console.log(`📊 ${jobs.length} jobs → ${decisionMakers.length} DMs → ${verifiedLeads.length} verified → ${newLeads.length} new → ${generated} emails`);
 }
 
 main().catch(console.error);
