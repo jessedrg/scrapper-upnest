@@ -591,27 +591,57 @@ class CompleteWorkflowManager {
   }
 
   /**
-   * Verify emails via Apify actor (fallback)
+   * Verify emails via Apify actor (fallback) — in batches with async polling
    */
   private async verifyWithApify(emails: string[]): Promise<any[] | null> {
     console.log(`   📨 Using Apify email verifier (fallback)...`);
 
-    try {
-      const response = await axios.post(
-        `https://api.apify.com/v2/acts/${this.EMAIL_VERIFIER_ACTOR}/run-sync-get-dataset-items`,
-        { emails },
-        {
-          params: { token: this.apifyToken },
-          headers: { 'Content-Type': 'application/json' },
-          timeout: 300000
+    const BATCH_SIZE = 500;
+    const allResults: any[] = [];
+
+    for (let i = 0; i < emails.length; i += BATCH_SIZE) {
+      const batch = emails.slice(i, i + BATCH_SIZE);
+      const batchNum = Math.floor(i / BATCH_SIZE) + 1;
+      const totalBatches = Math.ceil(emails.length / BATCH_SIZE);
+      console.log(`   📨 Verifying batch ${batchNum}/${totalBatches} (${batch.length} emails)...`);
+
+      try {
+        // Start async run
+        const startResp = await axios.post(
+          `https://api.apify.com/v2/acts/${this.EMAIL_VERIFIER_ACTOR}/runs`,
+          { emails: batch },
+          {
+            params: { token: this.apifyToken },
+            headers: { 'Content-Type': 'application/json' },
+            timeout: 30000
+          }
+        );
+
+        const runId = startResp.data?.data?.id;
+        const datasetId = startResp.data?.data?.defaultDatasetId;
+        if (!runId) {
+          console.log(`   ⚠️  Batch ${batchNum}: No run ID returned, skipping`);
+          continue;
         }
-      );
-      return Array.isArray(response.data) ? response.data : [];
-    } catch (err: any) {
-      const status = err?.response?.status || err?.status;
-      console.log(`   ⚠️  Apify verifier failed (HTTP ${status})`);
-      return null;
+
+        // Poll until finished
+        await this.pollRunStatus(runId, `Email Verifier batch ${batchNum}`, 600000);
+
+        // Fetch results
+        const itemsResp = await axios.get(
+          `https://api.apify.com/v2/datasets/${datasetId}/items`,
+          { params: { token: this.apifyToken, format: 'json' }, timeout: 60000 }
+        );
+        const items = Array.isArray(itemsResp.data) ? itemsResp.data : [];
+        allResults.push(...items);
+        console.log(`   ✅ Batch ${batchNum}: ${items.length} results`);
+
+      } catch (err: any) {
+        console.log(`   ⚠️  Batch ${batchNum} failed: ${err.message}`);
+      }
     }
+
+    return allResults.length > 0 ? allResults : null;
   }
 
   /**
