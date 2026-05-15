@@ -301,14 +301,14 @@ class CompleteWorkflowManager {
 
     const processedJobs: JobPost[] = jobs.map((job: any) => ({
       title: job.title || '',
-      company: job.company || '',
+      company: job.companyName || job.company || '',
       location: job.location || '',
-      companyWebsite: job.companyUrl || job.companyWebsite || '',
-      linkedInUrl: job.jobUrl || job.linkedInUrl || '',
+      companyWebsite: job.companyWebsite || job.companyUrl || '',
+      linkedInUrl: job.link || job.jobUrl || job.linkedInUrl || '',
       posted_date: job.postedAt || job.posted_date || '',
-      employment_type: job.contractType || job.employment_type || '',
-      industry: job.companyIndustry || job.industry || '',
-      description: job.description || ''
+      employment_type: job.employmentType || job.contractType || '',
+      industry: Array.isArray(job.industries) ? job.industries.join(', ') : (job.industries || job.industry || ''),
+      description: job.descriptionText || job.description || ''
     }));
 
     await this.saveToCSV(processedJobs, 'linkedin_jobs.csv');
