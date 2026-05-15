@@ -5,7 +5,7 @@
     "dockerfilePath": "Dockerfile"
   },
   "deploy": {
-    "startCommand": "NODE_OPTIONS=--max-old-space-size=2048 npx tsx examples/complete-workflow.ts",
+    "startCommand": "npx tsx examples/complete-workflow.ts",
     "cronSchedule": "0 7 * * 1-5",
     "restartPolicyType": "NEVER"
   }
