@@ -93,6 +93,44 @@ class CompleteWorkflowManager {
     }
   }
 
+  // ─── POLLING HELPER (with retry on transient errors) ───────────────────────
+
+  private async pollRunStatus(runId: string, label: string, maxWaitMs: number = 1800000): Promise<void> {
+    const pollInterval = 10000;
+    let elapsed = 0;
+
+    while (elapsed < maxWaitMs) {
+      await new Promise(r => setTimeout(r, pollInterval));
+      elapsed += pollInterval;
+
+      try {
+        const resp = await axios.get(
+          `https://api.apify.com/v2/actor-runs/${runId}`,
+          { params: { token: this.apifyToken }, timeout: 15000 }
+        );
+
+        const status = resp.data?.data?.status;
+        if (status === 'SUCCEEDED') {
+          console.log(`   ✅ ${label} finished in ${Math.round(elapsed / 1000)}s`);
+          return;
+        } else if (status === 'FAILED' || status === 'ABORTED' || status === 'TIMED-OUT') {
+          throw new Error(`${label} run ${status}`);
+        }
+
+        process.stdout.write(`   ⏳ ${label}... (${Math.round(elapsed / 1000)}s, status: ${status})\r`);
+      } catch (err: any) {
+        const httpStatus = err?.response?.status;
+        if (httpStatus === 502 || httpStatus === 503 || httpStatus === 429) {
+          console.log(`   ⚠️  Transient error (${httpStatus}), retrying...`);
+          continue;
+        }
+        throw err;
+      }
+    }
+
+    throw new Error(`${label} timed out (${Math.round(maxWaitMs / 60000)}min)`);
+  }
+
   // ─── DEDUPLICATION (line-based for 100K+ scale) ─────────────────────────────
 
   private loadProcessedKeys(): Set<string> {
@@ -174,60 +212,82 @@ class CompleteWorkflowManager {
   }
 
   /**
+   * Check if there's a successful Jobs Scraper run from today we can reuse
+   */
+  private async getReusableJobsRun(): Promise<{ datasetId: string; itemCount: number } | null> {
+    try {
+      const resp = await axios.get(
+        `https://api.apify.com/v2/acts/${this.JOBS_ACTOR}/runs`,
+        {
+          params: { token: this.apifyToken, limit: 5, desc: true, status: 'SUCCEEDED' },
+          timeout: 15000
+        }
+      );
+
+      const runs = resp.data?.data?.items || [];
+      const today = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+
+      for (const run of runs) {
+        const runDate = (run.finishedAt || run.startedAt || '').slice(0, 10);
+        if (runDate === today && run.defaultDatasetId) {
+          // Verify it has items
+          const dsResp = await axios.get(
+            `https://api.apify.com/v2/datasets/${run.defaultDatasetId}`,
+            { params: { token: this.apifyToken }, timeout: 15000 }
+          );
+          const itemCount = dsResp.data?.data?.itemCount || 0;
+          if (itemCount > 0) {
+            return { datasetId: run.defaultDatasetId, itemCount };
+          }
+        }
+      }
+    } catch (err: any) {
+      console.log(`   ⚠️  Could not check for reusable runs: ${err.message}`);
+    }
+    return null;
+  }
+
+  /**
    * Step 1: Scrape LinkedIn jobs using async actor run (no timeout)
+   * Reuses today's run if available to avoid duplicate Apify costs
    */
   async scrapeJobs(urls: string[] = ALL_URLS, count: number = 10000): Promise<JobPost[]> {
     console.log('📊 Step 1: Scraping LinkedIn jobs...');
     console.log(`🌍 Using ${urls.length} URLs, requesting ${count} jobs`);
-    
-    // Step 1a: Start the actor run (async)
-    const startResponse = await axios.post(
-      `https://api.apify.com/v2/acts/${this.JOBS_ACTOR}/runs`,
-      {
-        urls,
-        scrapeCompany: true,
-        count: Math.max(count, 10)
-      },
-      {
-        params: { token: this.apifyToken },
-        headers: { 'Content-Type': 'application/json' },
-        timeout: 30000
-      }
-    );
 
-    const runId = startResponse.data?.data?.id;
-    const datasetId = startResponse.data?.data?.defaultDatasetId;
-    if (!runId) throw new Error('Failed to start Apify actor run');
-    console.log(`   🏃 Actor run started: ${runId}`);
+    let datasetId: string;
 
-    // Step 1b: Poll until finished
-    const maxWait = 1800000; // 30 min
-    const pollInterval = 10000; // 10 sec
-    let elapsed = 0;
-
-    while (elapsed < maxWait) {
-      await new Promise(r => setTimeout(r, pollInterval));
-      elapsed += pollInterval;
-
-      const statusResponse = await axios.get(
-        `https://api.apify.com/v2/actor-runs/${runId}`,
-        { params: { token: this.apifyToken }, timeout: 15000 }
+    // Check for a reusable run from today
+    const reusable = await this.getReusableJobsRun();
+    if (reusable) {
+      console.log(`   ♻️  Found today's run with ${reusable.itemCount} jobs — reusing dataset`);
+      datasetId = reusable.datasetId;
+    } else {
+      // Start a new actor run
+      const startResponse = await axios.post(
+        `https://api.apify.com/v2/acts/${this.JOBS_ACTOR}/runs`,
+        {
+          urls,
+          scrapeCompany: true,
+          count: Math.max(count, 10)
+        },
+        {
+          params: { token: this.apifyToken },
+          headers: { 'Content-Type': 'application/json' },
+          timeout: 30000
+        }
       );
 
-      const status = statusResponse.data?.data?.status;
-      if (status === 'SUCCEEDED') {
-        console.log(`   ✅ Actor finished in ${Math.round(elapsed / 1000)}s`);
-        break;
-      } else if (status === 'FAILED' || status === 'ABORTED' || status === 'TIMED-OUT') {
-        throw new Error(`Apify actor run ${status}`);
-      }
+      const runId = startResponse.data?.data?.id;
+      datasetId = startResponse.data?.data?.defaultDatasetId;
+      if (!runId) throw new Error('Failed to start Apify actor run');
+      console.log(`   🏃 Actor run started: ${runId}`);
 
-      process.stdout.write(`   ⏳ Running... (${Math.round(elapsed / 1000)}s, status: ${status})\r`);
+      // Poll until finished (with retry on transient errors)
+      await this.pollRunStatus(runId, 'Jobs Scraper');
     }
 
-    if (elapsed >= maxWait) throw new Error('Apify actor run timed out (30min)');
-
-    // Step 1c: Fetch dataset items
+    // Fetch dataset items
     console.log(`   📥 Fetching results from dataset...`);
     const itemsResponse = await axios.get(
       `https://api.apify.com/v2/datasets/${datasetId}/items`,
@@ -279,61 +339,82 @@ class CompleteWorkflowManager {
   }
 
   /**
+   * Check if there's a successful Leads Scraper run from today we can reuse
+   */
+  private readonly LEADS_ACTOR = 'jupri~leads-scraper';
+
+  private async getReusableLeadsRun(): Promise<{ datasetId: string; itemCount: number } | null> {
+    try {
+      const resp = await axios.get(
+        `https://api.apify.com/v2/actor-tasks/verifiable_cougar~scrape-desicion-makers/runs`,
+        {
+          params: { token: this.apifyToken, limit: 5, desc: true, status: 'SUCCEEDED' },
+          timeout: 15000
+        }
+      );
+
+      const runs = resp.data?.data?.items || [];
+      const today = new Date().toISOString().slice(0, 10);
+
+      for (const run of runs) {
+        const runDate = (run.finishedAt || run.startedAt || '').slice(0, 10);
+        if (runDate === today && run.defaultDatasetId) {
+          const dsResp = await axios.get(
+            `https://api.apify.com/v2/datasets/${run.defaultDatasetId}`,
+            { params: { token: this.apifyToken }, timeout: 15000 }
+          );
+          const itemCount = dsResp.data?.data?.itemCount || 0;
+          if (itemCount > 0) {
+            return { datasetId: run.defaultDatasetId, itemCount };
+          }
+        }
+      }
+    } catch (err: any) {
+      console.log(`   ⚠️  Could not check for reusable leads runs: ${err.message}`);
+    }
+    return null;
+  }
+
+  /**
    * Step 3: Scrape decision makers
+   * Reuses today's run if available
    */
   async scrapeDecisionMakers(domains: string[]): Promise<DecisionMaker[]> {
     console.log('🎯 Step 3: Scraping decision makers...');
-    
-    await this.leadsRunner.updateCompanyDomains(domains);
-    
-    await this.leadsRunner.setupDecisionMakers({
-      titles: [
-        'Head of Talent', 'Head of Talent Acquisition', 'Head of Recruiting',
-        'VP Talent', 'VP Talent Acquisition', 'VP People',
-        'Director of Recruiting', 'Director of Talent', 'Director of Talent Acquisition',
-        'Head of People', 'Head of HR',
-        'CTO', 'VP Engineering', 'VP of Engineering', 'Head of Engineering',
-        'Director of Engineering', 'Engineering Manager',
-        'Co-Founder', 'Founder', 'CEO'
-      ],
-      seniority: ['c_suite', 'vp', 'director', 'manager'],
-      functions: ['human_resources', 'engineering', 'operations'],
-      countries: ['United States', 'United Kingdom', 'Germany', 'France', 'Canada', 'Australia'],
-      leadCount: 15000,
-      requireEmail: true
-    });
 
-    // Use async run + poll (sync times out with large leadCounts)
-    const runInfo = await this.leadsRunner.runAsync();
-    const runId = runInfo.id;
-    const datasetId = runInfo.defaultDatasetId;
-    console.log(`   🏃 Leads Scraper run started: ${runId}`);
+    let datasetId: string;
 
-    const maxWait = 1800000; // 30 min
-    const pollInterval = 10000;
-    let elapsed = 0;
+    const reusable = await this.getReusableLeadsRun();
+    if (reusable) {
+      console.log(`   ♻️  Found today's leads run with ${reusable.itemCount} DMs — reusing dataset`);
+      datasetId = reusable.datasetId;
+    } else {
+      await this.leadsRunner.updateCompanyDomains(domains);
+      
+      await this.leadsRunner.setupDecisionMakers({
+        titles: [
+          'Head of Talent', 'Head of Talent Acquisition', 'Head of Recruiting',
+          'VP Talent', 'VP Talent Acquisition', 'VP People',
+          'Director of Recruiting', 'Director of Talent', 'Director of Talent Acquisition',
+          'Head of People', 'Head of HR',
+          'CTO', 'VP Engineering', 'VP of Engineering', 'Head of Engineering',
+          'Director of Engineering', 'Engineering Manager',
+          'Co-Founder', 'Founder', 'CEO'
+        ],
+        seniority: ['c_suite', 'vp', 'director', 'manager'],
+        functions: ['human_resources', 'engineering', 'operations'],
+        countries: ['United States', 'United Kingdom', 'Germany', 'France', 'Canada', 'Australia'],
+        leadCount: 15000,
+        requireEmail: true
+      });
 
-    while (elapsed < maxWait) {
-      await new Promise(r => setTimeout(r, pollInterval));
-      elapsed += pollInterval;
+      const runInfo = await this.leadsRunner.runAsync();
+      const runId = runInfo.id;
+      datasetId = runInfo.defaultDatasetId;
+      console.log(`   🏃 Leads Scraper run started: ${runId}`);
 
-      const statusResp = await axios.get(
-        `https://api.apify.com/v2/actor-runs/${runId}`,
-        { params: { token: this.apifyToken }, timeout: 15000 }
-      );
-
-      const status = statusResp.data?.data?.status;
-      if (status === 'SUCCEEDED') {
-        console.log(`   ✅ Leads Scraper finished in ${Math.round(elapsed / 1000)}s`);
-        break;
-      } else if (status === 'FAILED' || status === 'ABORTED' || status === 'TIMED-OUT') {
-        throw new Error(`Leads Scraper run ${status}`);
-      }
-
-      process.stdout.write(`   ⏳ Scraping leads... (${Math.round(elapsed / 1000)}s, status: ${status})\r`);
+      await this.pollRunStatus(runId, 'Leads Scraper');
     }
-
-    if (elapsed >= maxWait) throw new Error('Leads Scraper timed out (30min)');
 
     // Fetch dataset items
     console.log(`   📥 Fetching leads from dataset...`);
