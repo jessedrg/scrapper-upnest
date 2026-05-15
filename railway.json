@@ -6,7 +6,7 @@
   },
   "deploy": {
     "startCommand": "npx tsx examples/complete-workflow.ts",
-    "cronSchedule": "0 7 * * *",
+    "cronSchedule": "0 7 * * 1-5",
     "restartPolicyType": "NEVER"
   }
 }
