@@ -735,30 +735,52 @@ class CompleteWorkflowManager {
 
     const mergedLeads: MergedLead[] = [];
     let matches = 0;
+    let byDomain = 0;
+    let byName = 0;
+    let byFuzzy = 0;
 
-    console.log(`🔍 Checking ${decisionMakers.length} decision makers against ${domainMap.size} company domains`);
+    // Build a secondary index by normalized company name for fast lookup
+    const nameMap = new Map<string, JobPost[]>();
+    for (const [, jobs] of domainMap.entries()) {
+      const name = (jobs[0]?.company || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+      if (name && !nameMap.has(name)) {
+        nameMap.set(name, jobs);
+      }
+    }
+
+    console.log(`🔍 Checking ${decisionMakers.length} decision makers against ${domainMap.size} domains + ${nameMap.size} company names`);
 
     decisionMakers.forEach(decisionMaker => {
-      const domain = this.extractDomain(decisionMaker.companyName);
-      const companyJobs = domainMap.get(domain);
-      
-      if (!companyJobs || companyJobs.length === 0) {
-        // Try fuzzy matching
-        const fuzzyMatch = this.findFuzzyMatch(decisionMaker.companyName, domainMap);
-        if (fuzzyMatch) {
-          matches++;
-          const mergedLead = this.createMergedLead(decisionMaker, fuzzyMatch.jobs);
-          mergedLeads.push(mergedLead);
-        }
+      const dmCompany = decisionMaker.companyName || '';
+      const dmNormalized = dmCompany.toLowerCase().replace(/[^a-z0-9]/g, '');
+
+      // 1. Try exact domain match
+      const domain = this.extractDomain(dmCompany);
+      let companyJobs = domainMap.get(domain);
+      if (companyJobs && companyJobs.length > 0) {
+        matches++; byDomain++;
+        mergedLeads.push(this.createMergedLead(decisionMaker, companyJobs));
         return;
       }
 
-      matches++;
-      const mergedLead = this.createMergedLead(decisionMaker, companyJobs);
-      mergedLeads.push(mergedLead);
+      // 2. Try normalized company name match
+      companyJobs = nameMap.get(dmNormalized);
+      if (companyJobs && companyJobs.length > 0) {
+        matches++; byName++;
+        mergedLeads.push(this.createMergedLead(decisionMaker, companyJobs));
+        return;
+      }
+
+      // 3. Try fuzzy/partial name match
+      const fuzzyMatch = this.findFuzzyMatch(dmCompany, domainMap);
+      if (fuzzyMatch) {
+        matches++; byFuzzy++;
+        mergedLeads.push(this.createMergedLead(decisionMaker, fuzzyMatch.jobs));
+        return;
+      }
     });
 
-    console.log(`✅ Found ${matches} matches, merged ${mergedLeads.length} leads with job data`);
+    console.log(`✅ Found ${matches} matches (domain: ${byDomain}, name: ${byName}, fuzzy: ${byFuzzy}), merged ${mergedLeads.length} leads`);
     return mergedLeads;
   }
 

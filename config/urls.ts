@@ -20,9 +20,12 @@ export const US_URLS = [
   "https://www.linkedin.com/jobs/search/?keywords=software+engineer+startup&location=United%20States&f_TPR=r86400&utm_source=chatgpt.com",
   "https://www.linkedin.com/jobs/search/?keywords=series+a+software+engineer&location=United%20States&f_TPR=r86400&utm_source=chatgpt.com",
   "https://www.linkedin.com/jobs/search/?keywords=software+engineer&location=United%20States&f_WT=2&f_TPR=r86400&utm_source=chatgpt.com",
-  "https://www.linkedin.com/jobs/search/?keywords=react+developer&location=United%20States&f_TPR=r86400&sortBy=DD&utm_source=chatgpt.com",
-  "https://www.linkedin.com/jobs/search/?keywords=python+developer&location=United%20States&f_TPR=r86400&sortBy=DD&utm_source=chatgpt.com",
-  "https://www.linkedin.com/jobs/search/?keywords=staff+software+engineer&location=United%20States&f_TPR=r86400&sortBy=DD&utm_source=chatgpt.com"
+  "https://www.linkedin.com/jobs/search/?keywords=react+developer&location=United%20States&f_TPR=r86400&sortBy=DD",
+  "https://www.linkedin.com/jobs/search/?keywords=python+developer&location=United%20States&f_TPR=r86400&sortBy=DD",
+  "https://www.linkedin.com/jobs/search/?keywords=staff+software+engineer&location=United%20States&f_TPR=r86400&sortBy=DD",
+  "https://www.linkedin.com/jobs/search/?keywords=growth+marketing&location=United%20States&f_TPR=r86400&sortBy=DD",
+  "https://www.linkedin.com/jobs/search/?keywords=head+of+sales&location=United%20States&f_TPR=r86400&sortBy=DD",
+  "https://www.linkedin.com/jobs/search/?keywords=vp+engineering&location=United%20States&f_TPR=r86400&sortBy=DD"
 ];
 
 export const EUROPE_URLS = [
