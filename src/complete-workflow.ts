@@ -304,43 +304,84 @@ class CompleteWorkflowManager {
     const rawJobs = Array.isArray(itemsResponse.data) ? itemsResponse.data : [];
     console.log(`   📦 Raw jobs from Apify: ${rawJobs.length}`);
 
-    // Filter out staffing agencies, headhunting firms, and companies >500 employees
-    const EXCLUDED_KEYWORDS = [
-      'staffing', 'recruiting', 'recruitment', 'headhunt', 'headhunting',
-      'talent agency', 'talent acquisition firm', 'employment agency',
+    // Filter out staffing agencies, headhunting firms, consulting giants, and large companies
+    const EXCLUDED_COMPANY_NAMES = [
+      // Staffing & recruiting agencies
       'manpower', 'adecco', 'randstad', 'robert half', 'hays',
-      'kelly services', 'kforce', 'insight global', 'tek systems',
-      'apex group', 'aerotek', 'allegis', 'express employment',
-      'search firm', 'executive search', 'placement', 'temp agency',
-      'contract staffing', 'outsourcing'
+      'kelly services', 'kforce', 'insight global', 'teksystems', 'tek systems',
+      'apex group', 'aerotek', 'allegis', 'express employment', 'spherion',
+      'modis', 'volt', 'beacon hill', 'yoh', 'cielo talent',
+      'hudson', 'page group', 'pagegroup', 'michael page', 'spencer stuart',
+      'korn ferry', 'egon zehnder', 'russell reynolds', 'boyden',
+      'harvey nash', 'nigel frank', 'heidrick & struggles', 'heidrick and struggles',
+      'talent solutions', 'staffing solutions', 'recruiting solutions',
+      'brainworks', 'jobspring', 'cybercoders', 'dice', 'hired',
+      'toptal', 'andela', 'crossover', 'turing', 'g2i', 'gun.io',
+      'the muse', 'vettery', 'triplebyte',
+      // Consulting/outsourcing giants
+      'accenture', 'deloitte', 'cognizant', 'infosys', 'wipro', 'tcs',
+      'tata consultancy', 'capgemini', 'atos', 'dxc technology', 'unisys',
+      'hcl technologies', 'tech mahindra', 'lti mindtree', 'persistent systems',
+      'globant', 'epam', 'luxoft', 'endava', 'softserve', 'grid dynamics',
+      'thoughtworks', 'slalom', 'avanade', 'publicis sapient',
+      // BPO / outsourcing
+      'concentrix', 'teleperformance', 'genpact', 'exl service', 'sutherland',
+      'conduent', 'firstsource', 'css corp', 'alorica', 'sitel',
+      'convergys', 'ttec', 'webhelp', 'majorel'
     ];
+
+    const EXCLUDED_KEYWORDS = [
+      // Generic staffing/agency terms (checked in company name, description, slogan, industry)
+      'staffing', 'recruiting agency', 'recruitment agency', 'headhunting',
+      'headhunter', 'talent agency', 'talent acquisition firm', 'employment agency',
+      'search firm', 'executive search', 'placement agency', 'placement firm',
+      'temp agency', 'temporary staffing', 'contract staffing',
+      'staff augmentation', 'body shop', 'workforce solutions',
+      'human capital management', 'talent solutions', 'staffing company',
+      'recruiting firm', 'recruitment firm', 'hiring agency',
+      'outsourcing', 'outsourced', 'offshoring', 'nearshoring',
+      'managed services provider', 'consulting firm'
+    ];
+
+    const EXCLUDED_INDUSTRIES = [
+      'staffing and recruiting', 'human resources services',
+      'outsourcing/offshoring', 'outsourcing and offshoring',
+      'professional employer organization'
+    ];
+
+    let filteredOut = { large: 0, name: 0, keyword: 0, industry: 0 };
 
     const filteredJobs = rawJobs.filter((job: any) => {
       // Check employee count — exclude >500
       const empCount = parseInt(job.companyEmployeesCount || '0', 10);
-      if (empCount > 500) return false;
+      if (empCount > 500) { filteredOut.large++; return false; }
 
-      // Check company name + description for staffing/agency keywords
-      const companyLower = (job.companyName || '').toLowerCase();
+      const companyLower = (job.companyName || '').toLowerCase().trim();
       const descLower = (job.companyDescription || '').toLowerCase();
-      const industryLower = Array.isArray(job.industries)
-        ? job.industries.join(' ').toLowerCase()
+      const sloganLower = (job.companySlogan || '').toLowerCase();
+      const industryRaw = Array.isArray(job.industries)
+        ? job.industries.join(' | ').toLowerCase()
         : (job.industries || '').toLowerCase();
 
-      const isAgency = EXCLUDED_KEYWORDS.some(kw =>
-        companyLower.includes(kw) || industryLower.includes(kw)
+      // Check against known agency/consulting company names
+      const isKnownAgency = EXCLUDED_COMPANY_NAMES.some(name =>
+        companyLower.includes(name) || companyLower.replace(/[^a-z0-9]/g, '').includes(name.replace(/[^a-z0-9]/g, ''))
       );
-      if (isAgency) return false;
+      if (isKnownAgency) { filteredOut.name++; return false; }
 
-      // Also check if company slogan/description screams staffing
-      const sloganLower = (job.companySlogan || '').toLowerCase();
-      const isAgencyDesc = EXCLUDED_KEYWORDS.some(kw =>
-        sloganLower.includes(kw) || descLower.includes(kw)
-      );
-      if (isAgencyDesc) return false;
+      // Check keywords in company name, slogan, description
+      const allText = `${companyLower} ${sloganLower} ${descLower}`;
+      const hasKeyword = EXCLUDED_KEYWORDS.some(kw => allText.includes(kw));
+      if (hasKeyword) { filteredOut.keyword++; return false; }
+
+      // Check industry classification
+      const isBadIndustry = EXCLUDED_INDUSTRIES.some(ind => industryRaw.includes(ind));
+      if (isBadIndustry) { filteredOut.industry++; return false; }
 
       return true;
     });
+
+    console.log(`   🚫 Filtered out: ${filteredOut.large} large (>500), ${filteredOut.name} known agencies, ${filteredOut.keyword} by keywords, ${filteredOut.industry} by industry`);
 
     console.log(`   🔍 After filtering: ${filteredJobs.length} jobs (removed ${rawJobs.length - filteredJobs.length} agencies/large companies)`);
 
