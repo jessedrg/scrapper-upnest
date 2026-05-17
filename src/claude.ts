@@ -244,14 +244,16 @@ export async function callClaude(
       clearTimeout(timeout);
 
       if (response.status === 429) {
-        const wait = 8000 * (attempt + 1);
-        console.warn(`429 rate limit, waiting ${wait / 1000}s`);
+        const jitter = Math.random() * 2000;
+        const wait = 8000 * (attempt + 1) + jitter;
+        console.warn(`429 rate limit, waiting ${(wait / 1000).toFixed(1)}s (attempt ${attempt + 1}/${retries})`);
         await new Promise((r) => setTimeout(r, wait));
         continue;
       }
       if (response.status === 529 || response.status === 503) {
-        const wait = 5000 * (attempt + 1);
-        console.warn(`${response.status} overloaded, waiting ${wait / 1000}s`);
+        const jitter = Math.random() * 2000;
+        const wait = 5000 * (attempt + 1) + jitter;
+        console.warn(`${response.status} overloaded, waiting ${(wait / 1000).toFixed(1)}s (attempt ${attempt + 1}/${retries})`);
         await new Promise((r) => setTimeout(r, wait));
         continue;
       }

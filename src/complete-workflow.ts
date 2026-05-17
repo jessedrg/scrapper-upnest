@@ -1090,83 +1090,102 @@ class CompleteWorkflowManager {
     let generated = 0;
     const instantlyBatch: InstantlyRecord[] = [];
     const BATCH_SIZE = 50;
+    const CONCURRENCY = 10;
     const titleCompanySent = new Set<string>();
 
-    for (let i = 0; i < limitedLeads.length; i++) {
-      const lead = limitedLeads[i];
-
-      // Only 1 email per unique job title + company combination
-      const roleTitles = (lead.openRoles_titles || '').toLowerCase().split(',').map(t => t.trim()).filter(Boolean);
-      const companyKey = lead.companyName.toLowerCase().trim();
-      const alreadySent = roleTitles.length > 0
-        ? roleTitles.every(title => titleCompanySent.has(`${title}__${companyKey}`))
-        : titleCompanySent.has(companyKey);
-      if (alreadySent) {
-        console.log(`   ⏭️  Skipping ${lead.firstName} @ ${lead.companyName} (already contacted for same role+company)`);
-        continue;
+    // Process leads in parallel batches
+    for (let i = 0; i < limitedLeads.length; i += CONCURRENCY) {
+      const chunk = limitedLeads.slice(i, i + CONCURRENCY);
+      
+      // Filter out already-sent leads
+      const validLeads: { lead: MergedLead; idx: number }[] = [];
+      for (let j = 0; j < chunk.length; j++) {
+        const lead = chunk[j];
+        const roleTitles = (lead.openRoles_titles || '').toLowerCase().split(',').map(t => t.trim()).filter(Boolean);
+        const companyKey = lead.companyName.toLowerCase().trim();
+        const alreadySent = roleTitles.length > 0
+          ? roleTitles.every(title => titleCompanySent.has(`${title}__${companyKey}`))
+          : titleCompanySent.has(companyKey);
+        if (alreadySent) continue;
+        validLeads.push({ lead, idx: i + j });
       }
 
-      console.log(`📧 ${i + 1}/${limitedLeads.length} (generated: ${generated}): ${lead.firstName} ${lead.lastName} @ ${lead.companyName}`);
+      if (validLeads.length === 0) continue;
 
-      const prompt = buildOutreachPrompt(lead);
-      const result = await callClaude(prompt, this.claudeConfig);
+      console.log(`📧 Batch ${Math.floor(i / CONCURRENCY) + 1}: generating ${validLeads.length} emails (${generated} done so far)...`);
 
-      if ('error' in result) {
-        console.error(`   ❌ Claude error: ${result.error}`);
-        continue;
-      }
-
-      const domain = this.extractDomain(lead.companyName);
-      const companyJobs = domainMap.get(domain) || [];
-      const dm = Array.from(decisionMakersMap.values()).find(d =>
-        d.firstName === lead.firstName && d.lastName === lead.lastName &&
-        d.companyName.toLowerCase() === lead.companyName.toLowerCase()
+      // Call Claude in parallel for this chunk
+      const results = await Promise.all(
+        validLeads.map(({ lead }) => {
+          const prompt = buildOutreachPrompt(lead);
+          return callClaude(prompt, this.claudeConfig);
+        })
       );
 
-      // Use jobPostUrls from MergedLead (set in Step 5), fallback to domainMap
-      const jobUrls = (lead.jobPostUrls && lead.jobPostUrls.length > 0)
-        ? lead.jobPostUrls
-        : companyJobs.map(job => job.linkedInUrl).filter(Boolean) as string[];
+      // Process results
+      for (let j = 0; j < validLeads.length; j++) {
+        const { lead } = validLeads[j];
+        const result = results[j];
 
-      const pauseUntil = new Date();
-      pauseUntil.setDate(pauseUntil.getDate() + 3);
-      const campaign = this.getCampaignForLead(lead);
+        if ('error' in result) {
+          console.error(`   ❌ Claude error for ${lead.firstName} @ ${lead.companyName}: ${result.error}`);
+          continue;
+        }
 
-      const record: InstantlyRecord = {
-        lastName: lead.lastName,
-        firstName: lead.firstName,
-        companyName: lead.companyName,
-        jobTitle: lead.title,
-        linkedIn: dm?.linkedIn || '',
-        email1_subject: result.email1_subject,
-        email1_body: result.email1_body,
-        jobPostUrls: jobUrls.join(' ||| '),
-        pause_until: pauseUntil.toISOString(),
-        campaignRegion: campaign.region,
-        campaignTimezone: campaign.timezone,
-        campaignId: campaign.id
-      };
+        const domain = this.extractDomain(lead.companyName);
+        const companyJobs = domainMap.get(domain) || [];
+        const dm = Array.from(decisionMakersMap.values()).find(d =>
+          d.firstName === lead.firstName && d.lastName === lead.lastName &&
+          d.companyName.toLowerCase() === lead.companyName.toLowerCase()
+        );
 
-      // Append row to CSV immediately
-      const row = headers.map(h => {
-        const val = String((record as any)[h] || '').replace(/"/g, '""');
-        return `"${val}"`;
-      }).join(',');
-      fs.appendFileSync(csvPath, row + '\n');
+        const jobUrls = (lead.jobPostUrls && lead.jobPostUrls.length > 0)
+          ? lead.jobPostUrls
+          : companyJobs.map(job => job.linkedInUrl).filter(Boolean) as string[];
 
-      // Mark dedup immediately — one key per job post URL
-      const dedupUrls = jobUrls.length > 0 ? jobUrls : [lead.companyName];
-      const dedupKeys = dedupUrls.map(url => this.buildKey(url, dm?.email || ''));
-      this.appendProcessedKeys(dedupKeys);
+        const pauseUntil = new Date();
+        pauseUntil.setDate(pauseUntil.getDate() + 3);
+        const campaign = this.getCampaignForLead(lead);
 
-      instantlyBatch.push(record);
-      // Mark role titles as sent for this company
-      if (roleTitles.length > 0) {
-        roleTitles.forEach(title => titleCompanySent.add(`${title}__${companyKey}`));
-      } else {
-        titleCompanySent.add(companyKey);
+        const record: InstantlyRecord = {
+          lastName: lead.lastName,
+          firstName: lead.firstName,
+          companyName: lead.companyName,
+          jobTitle: lead.title,
+          linkedIn: dm?.linkedIn || '',
+          email1_subject: result.email1_subject,
+          email1_body: result.email1_body,
+          jobPostUrls: jobUrls.join(' ||| '),
+          pause_until: pauseUntil.toISOString(),
+          campaignRegion: campaign.region,
+          campaignTimezone: campaign.timezone,
+          campaignId: campaign.id
+        };
+
+        // Append row to CSV immediately
+        const row = headers.map(h => {
+          const val = String((record as any)[h] || '').replace(/"/g, '""');
+          return `"${val}"`;
+        }).join(',');
+        fs.appendFileSync(csvPath, row + '\n');
+
+        // Mark dedup immediately
+        const dedupUrls = jobUrls.length > 0 ? jobUrls : [lead.companyName];
+        const dedupKeys = dedupUrls.map(url => this.buildKey(url, dm?.email || ''));
+        this.appendProcessedKeys(dedupKeys);
+
+        instantlyBatch.push(record);
+
+        // Mark role titles as sent for this company
+        const roleTitles = (lead.openRoles_titles || '').toLowerCase().split(',').map((t: string) => t.trim()).filter(Boolean);
+        const companyKey = lead.companyName.toLowerCase().trim();
+        if (roleTitles.length > 0) {
+          roleTitles.forEach((title: string) => titleCompanySent.add(`${title}__${companyKey}`));
+        } else {
+          titleCompanySent.add(companyKey);
+        }
+        generated++;
       }
-      generated++;
 
       // Push to Instantly in batches
       if (instantlyBatch.length >= BATCH_SIZE) {
@@ -1175,9 +1194,6 @@ class CompleteWorkflowManager {
         }
         instantlyBatch.length = 0;
       }
-
-      // Rate limit delay
-      await new Promise(r => setTimeout(r, 1000));
     }
 
     // Push remaining batch
