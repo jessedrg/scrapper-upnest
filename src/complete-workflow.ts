@@ -283,25 +283,46 @@ class CompleteWorkflowManager {
     { key: 'remote', label: 'Remote', urls: REMOTE_URLS }
   ];
 
-  private todayRegion: typeof this.REGION_SCHEDULE[number] | null = null;
+  private readonly MIN_JOBS_TARGET = 13000;
+  private todayRegions: Array<typeof this.REGION_SCHEDULE[number]> = [];
 
-  private getTodayRegion(): typeof this.REGION_SCHEDULE[number] {
-    if (this.todayRegion) return this.todayRegion;
+  private getPrimaryRegion(): typeof this.REGION_SCHEDULE[number] {
     const now = new Date();
     const startOfYear = new Date(now.getFullYear(), 0, 0);
     const dayOfYear = Math.floor((now.getTime() - startOfYear.getTime()) / (1000 * 60 * 60 * 24));
-    this.todayRegion = this.REGION_SCHEDULE[dayOfYear % this.REGION_SCHEDULE.length];
-    return this.todayRegion;
+    return this.REGION_SCHEDULE[dayOfYear % this.REGION_SCHEDULE.length];
   }
 
-  async scrapeJobs(urls?: string[], count: number = 10000): Promise<JobPost[]> {
+  private getTodayRegion(): typeof this.REGION_SCHEDULE[number] {
+    if (this.todayRegions.length > 0) return this.todayRegions[0];
+    const primary = this.getPrimaryRegion();
+    this.todayRegions = [primary];
+    return primary;
+  }
+
+  private getNextRegion(): typeof this.REGION_SCHEDULE[number] | null {
+    const usedKeys = new Set(this.todayRegions.map(r => r.key));
+    const next = this.REGION_SCHEDULE.find(r => !usedKeys.has(r.key));
+    if (next) this.todayRegions.push(next);
+    return next || null;
+  }
+
+  private getCampaignForRegionKey(key: 'us' | 'europe' | 'apac' | 'remote'): { id: string; region: string; timezone: string } {
+    return this.CAMPAIGNS[key];
+  }
+
+  async scrapeJobs(urls?: string[], count: number = 15000): Promise<JobPost[]> {
     console.log('📊 Step 1: Scraping LinkedIn jobs...');
 
-    const region = this.getTodayRegion();
-    const campaign = this.CAMPAIGNS[region.key];
-    urls = region.urls;
-
-    console.log(`🌍 Today's region: ${region.label} (${campaign.timezone}) — ${urls.length} URLs`);
+    if (!urls) {
+      const region = this.getTodayRegion();
+      const campaign = this.CAMPAIGNS[region.key];
+      urls = region.urls;
+      console.log(`🌍 Primary region: ${region.label} (${campaign.timezone}) — ${urls.length} URLs`);
+      console.log(`   🎯 Target: ${this.MIN_JOBS_TARGET}+ jobs`);
+    } else {
+      console.log(`🌍 Using ${urls.length} provided URLs`);
+    }
 
     let datasetId: string;
 
@@ -448,6 +469,18 @@ class CompleteWorkflowManager {
     await this.saveToCSV(processedJobs, 'linkedin_jobs.csv');
     console.log(`✅ Scraped ${processedJobs.length} real job postings`);
     return processedJobs;
+  }
+
+  /**
+   * Scrape an additional region (called when primary region didn't hit MIN_JOBS_TARGET)
+   */
+  private async scrapeRegion(region: typeof this.REGION_SCHEDULE[number]): Promise<JobPost[]> {
+    console.log(`   🌍 Scraping additional region: ${region.label} (${region.urls.length} URLs)...`);
+    const originalRegions = this.todayRegions;
+    // Temporarily set as current region for scrapeJobs internals
+    const jobs = await this.scrapeJobs(region.urls);
+    this.todayRegions = originalRegions;
+    return jobs;
   }
 
   /**
@@ -903,9 +936,19 @@ class CompleteWorkflowManager {
     return 'general';
   }
 
-  private getCampaignForLead(_lead: MergedLead): { id: string; region: string; timezone: string } {
-    const region = this.getTodayRegion();
-    return this.CAMPAIGNS[region.key];
+  private getCampaignForLead(lead: MergedLead): { id: string; region: string; timezone: string } {
+    // If only 1 region used today, all leads go to that campaign
+    if (this.todayRegions.length <= 1) {
+      return this.CAMPAIGNS[this.todayRegions[0]?.key || 'us'];
+    }
+    // Multiple regions: infer from job location
+    const loc = `${lead.openRoles_locations || ''} ${lead.personCountry || ''}`.toLowerCase();
+    if (/remote|anywhere|distributed/.test(loc)) return this.CAMPAIGNS.remote;
+    if (/united states|usa|\bus\b|new york|california|texas|florida|chicago|boston|seattle|austin|denver/.test(loc)) return this.CAMPAIGNS.us;
+    if (/united kingdom|uk|germany|france|netherlands|spain|italy|sweden|denmark|finland|norway|switzerland|ireland|london|berlin|paris|amsterdam/.test(loc)) return this.CAMPAIGNS.europe;
+    if (/singapore|japan|south korea|hong kong|india|australia|new zealand|taiwan|malaysia|tokyo|sydney/.test(loc)) return this.CAMPAIGNS.apac;
+    // Fallback to primary region
+    return this.CAMPAIGNS[this.todayRegions[0].key];
   }
 
   /**
@@ -1202,8 +1245,22 @@ class CompleteWorkflowManager {
       console.log(`🌍 Region: ${region.label} | Timezone: ${campaign.timezone} | Campaign: ${campaign.id || 'NOT SET'}`);
       console.log(`🔢 Outreach: ${limit > 0 ? limit + ' records' : 'NO LIMIT'}\n`);
 
-      // Step 1: Scrape jobs (uses today's region URLs automatically)
-      const jobs = await this.scrapeJobs();
+      // Step 1: Scrape jobs — add regions until we hit 13K+ minimum
+      let jobs = await this.scrapeJobs();
+
+      while (jobs.length < this.MIN_JOBS_TARGET) {
+        const nextRegion = this.getNextRegion();
+        if (!nextRegion) {
+          console.log(`   ⚠️  All regions exhausted. Total jobs: ${jobs.length}`);
+          break;
+        }
+        console.log(`\n   📈 Only ${jobs.length} jobs from ${this.todayRegions.slice(0, -1).map(r => r.label).join(' + ')}. Adding ${nextRegion.label}...`);
+        const extraJobs = await this.scrapeRegion(nextRegion);
+        jobs = [...jobs, ...extraJobs];
+        console.log(`   ✅ Total jobs now: ${jobs.length}`);
+      }
+
+      console.log(`\n🌍 Regions used today: ${this.todayRegions.map(r => r.label).join(' + ')} (${jobs.length} jobs total)`);
 
       // Step 2: Extract domains
       const domainMap = this.extractCompanyDomains(jobs);
