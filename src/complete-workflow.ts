@@ -1056,7 +1056,7 @@ class CompleteWorkflowManager {
         continue;
       }
 
-      console.log(`📧 ${i + 1}/${limitedLeads.length}: ${lead.firstName} ${lead.lastName} @ ${lead.companyName}`);
+      console.log(`📧 ${i + 1}/${limitedLeads.length} (generated: ${generated}): ${lead.firstName} ${lead.lastName} @ ${lead.companyName}`);
 
       const prompt = buildOutreachPrompt(lead);
       const result = await callClaude(prompt, this.claudeConfig);
