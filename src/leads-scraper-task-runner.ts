@@ -270,11 +270,15 @@ export class LeadsScraperTaskRunner extends ApifyTaskManager {
     requireEmail?: boolean;
     emailVerified?: boolean;
   } = {}): Promise<void> {
+    // Build clean config from scratch (no merge with old config)
     const config: Partial<LeadsScraperTaskInput> = {
       totalResults: options.leadCount || 1000,
       hasEmail: options.requireEmail !== false,
+      hasPhone: false,
       includeTitleVariants: true,
-      roleMatchMode: 'any'
+      roleMatchMode: 'any',
+      resetProgress: true,
+      dontSaveProgress: true
     };
 
     if (options.titles) config.personTitleIncludes = options.titles;
@@ -284,7 +288,8 @@ export class LeadsScraperTaskRunner extends ApifyTaskManager {
     if (options.companyDomains) config.companyDomainIncludes = options.companyDomains;
     if (options.emailVerified) config.emailStatusIncludes = ['verified'];
 
-    await this.updateConfig(config);
+    // Replace entire config (not merge) to remove stale fields
+    await this.updateTaskInput(this.taskId, config);
     console.log('Configured for decision makers extraction');
   }
 }

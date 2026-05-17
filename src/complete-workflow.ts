@@ -603,8 +603,11 @@ class CompleteWorkflowManager {
     let datasetId: string;
 
     // Always run fresh with current domains (no reuse — domains change each run)
-    await this.leadsRunner.updateCompanyDomains(domains);
-    console.log(`   📤 Sending ${domains.length} domains to Leads Scraper...`);
+    const fullDomains = domains.map(d => {
+      const clean = d.replace(/^https?:\/\//, '').replace(/^www\./, '').split('/')[0].toLowerCase().trim();
+      return `https://${clean}`;
+    });
+    console.log(`   📤 Sending ${fullDomains.length} domains to Leads Scraper...`);
     
     await this.leadsRunner.setupDecisionMakers({
       titles: [
@@ -618,6 +621,7 @@ class CompleteWorkflowManager {
       ],
       seniority: ['c_suite', 'vp', 'director', 'manager'],
       functions: ['human_resources', 'engineering', 'operations'],
+      companyDomains: fullDomains,
       leadCount: 50000,
       requireEmail: true,
       emailVerified: true

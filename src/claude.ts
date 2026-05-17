@@ -141,87 +141,77 @@ export function buildOutreachPrompt(lead: MergedLead): string {
       angleInstructions = `ANGLE: "candidates in pipeline". Mention you have pre-vetted profiles that match.`;
   }
 
-  return `You are writing a single cold outreach email for Jesse, who runs Upnest Talent, a curated marketplace of senior candidates (engineering, product, growth, sales, marketing).
+  return `You write cold outreach emails for Jesse at Upnest Talent, a recruiting firm specializing in senior tech and business talent.
 
-The recipient is a contact at a company that has ACTIVE open roles right now.
+TASK: Write ONE short cold email to ${firstName} at ${company} about their open role(s). The email must feel like a real human recruiter wrote it in 30 seconds, not a template.
 
-WRITE IN ENGLISH. NO DASHES anywhere (not even em-dashes or en-dashes). Use commas or periods instead.
-Tone: direct, casual, lowercase where it feels natural. No formal openers. No emojis.
+LANGUAGE: English only. NO dashes (em-dash, en-dash). Use commas or periods. All lowercase except proper nouns and start of sentences.
 
 ${seniorityInstructions}
 
-${angleInstructions}
-
 JOB AGE: ${jobAgeContext}
 
-HOOK RULES (CRITICAL):
-- Your opening line MUST reference something SPECIFIC from the company description, NOT just the role title.
-- Good: "hi [name], saw [company] just raised a series B / is expanding into [market] / launched [product]. noticed you're hiring a [role]."
-- Bad: "hi [name], saw you're hiring a [role]." (too generic, NEVER do this)
-- If company description is empty, reference the specific tech stack or unique requirement from the job description instead.
+GOLDEN EXAMPLE (study this format closely):
+---
+subject: senior software engineer, growth candidates
 
-CANDIDATE BULLET RULES:
-- Only 2 bullets, NOT 3.
-- Each bullet: 8-12 words max. Ultra specific.
-- Reference domain expertise, scale numbers (ARR, users, team size), or well-known company types.
-- Frame as TYPES of candidates, not fictional individuals. Say "ex-[type of company], scaled [thing] to [number]" not "John who did X".
-- NEVER say "experienced professional", "strong leader", "proven track record". Be concrete.
+hi tony, saw you're hiring a Senior Software Engineer, Growth. personalized onboarding experiences through experiments sounds like a solid growth lever.
 
-SUBJECT LINE RULES:
-- NEVER use the same formula every time. Pick ONE of these based on what fits best:
-  1. "[exact role title] candidates for ${company}"
-  2. "re: your [exact role title] search"
-  3. "quick question about your [exact role title] hire"
-  4. "${company} + Upnest Talent"
-- Subject must be lowercase, short, feel like a real person wrote it.
+have 3 candidates in our pipeline right now who match:
 
-CTA RULES:
-- Vary the CTA. Pick ONE:
-  1. "want me to send over a couple anonymized profiles?"
-  2. "worth a look? can send profiles over today."
-  3. "one of them is in final stages elsewhere, let me know if you want to see profiles before they're gone."
-  4. "happy to send a quick shortlist, just say the word."
-- Match urgency to job age: if role is 14+ days old, use a more urgent CTA.
+• former datadog growth engineer, built onboarding experiments that improved activation 40%
+• ex-stripe product engineer with strong UX eye, shipped user flows for 10M+ signups
+• previous hubspot growth lead, ran A/B tests on cross-functional teams at 50k+ customer scale
 
-STRICT STRUCTURE (follow this EXACT spacing with blank lines between sections):
+want me to send over 2-3 anonymized profiles?
 
-[hook: greeting + company-specific observation + role mention]
-\n
-[angle-specific bridge line introducing candidates]
-\n
-, [candidate bullet 1]
-, [candidate bullet 2]
-\n
-[CTA]
-\n
 Jesse
 Upnest Talent
+---
 
-IMPORTANT FORMATTING: Use \n between each section. The email must breathe. Never write it as one dense paragraph.
+RULES (follow these exactly):
+
+1. HOOK: "hi [first name], saw you're hiring a [exact role title]. [one specific detail from the job description that shows you read it]."
+   - The specific detail MUST come from the actual job description below. Pick something unique: a technology, a product area, a team challenge, a scale metric.
+   - Keep it to ONE sentence after the role mention.
+
+2. BRIDGE: "have [2-3] candidates in our pipeline right now who match:" (or similar natural variation)
+
+3. CANDIDATE BULLETS (THIS IS THE MOST IMPORTANT PART):
+   - Exactly 3 bullets, each starting with •
+   - Each bullet must be HYPER REALISTIC and SPECIFIC to the job description
+   - Format: "• [credibility marker: former/ex/previous] [well-known company] [relevant role], [specific achievement with numbers that directly relates to what the job needs]"
+   - Read the job description carefully: what technologies do they need? what scale? what domain? what problems are they solving? Then craft candidates who have EXACTLY that experience.
+   - Use real, well-known companies that make sense for the role (not random Fortune 500s, pick companies known for the relevant domain)
+   - Include realistic metrics: percentages, user counts, ARR, team sizes, latency improvements, etc.
+   - NEVER be vague. "experienced engineer" = BAD. "ex-cloudflare SRE, reduced p99 latency from 200ms to 12ms across 30+ microservices" = GOOD.
+
+4. CTA: One casual line asking if they want to see profiles. Vary it naturally.
+
+5. SIGN OFF: "Jesse\\nUpnest Talent"
+
+SUBJECT LINE: lowercase, simple. Just "[exact role title] candidates" or "re: [exact role title]" or "[role] profiles for ${company}". No creativity needed.
+
+FORMATTING: Use \\n for line breaks. Blank line between hook, bridge, bullets, CTA, and sign-off. The email must breathe.
 
 CONTEXT:
 Name: ${firstName} ${lastName}
-Their title: ${title}
+Title: ${title}
 Company: ${company}
-Company description: ${companyDescription}
+Description: ${companyDescription}
 Employees: ${employees}
 Industry: ${industry}
-Person location: ${city}, ${country}
+Location: ${city}, ${country}
 
 OPEN ROLES:
-- Titles: ${roleTitles}
-- Seniority: ${roleSeniority}
-- Function: ${roleFunction}
-- Locations: ${roleLocations}
-- Number of open roles: ${roleCount}
-- Job post links: ${jobPostUrlsList}
+Titles: ${roleTitles}
+Seniority: ${roleSeniority}
+Function: ${roleFunction}
+Locations: ${roleLocations}
+Count: ${roleCount}
 
-FULL JOB DESCRIPTIONS (use these to match candidate profiles precisely):
+JOB DESCRIPTIONS (READ CAREFULLY to craft realistic matching candidates):
 ${roleDescriptions}
-
-Sign as:
-Jesse
-Upnest Talent
 
 OUTPUT (strict JSON, no preamble, no code fences):
 {"email1_subject":"...","email1_body":"..."}`;
