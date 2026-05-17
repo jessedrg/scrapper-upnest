@@ -252,12 +252,34 @@ class CompleteWorkflowManager {
   }
 
   /**
-   * Step 1: Scrape LinkedIn jobs using async actor run (no timeout)
-   * Reuses today's run if available to avoid duplicate Apify costs
+   * Rotate URLs daily: pick DAILY_URL_COUNT URLs based on day-of-year.
+   * Cycles through all URLs over multiple days so every URL gets used.
    */
+  private rotateDailyUrls(allUrls: string[], dailyCount: number = 10): string[] {
+    const now = new Date();
+    const startOfYear = new Date(now.getFullYear(), 0, 0);
+    const dayOfYear = Math.floor((now.getTime() - startOfYear.getTime()) / (1000 * 60 * 60 * 24));
+    const total = allUrls.length;
+    const startIndex = (dayOfYear * dailyCount) % total;
+    
+    const selected: string[] = [];
+    for (let i = 0; i < dailyCount; i++) {
+      selected.push(allUrls[(startIndex + i) % total]);
+    }
+    
+    console.log(`   📅 Day ${dayOfYear}: rotating URLs ${startIndex}–${(startIndex + dailyCount - 1) % total} of ${total} total`);
+    return selected;
+  }
+
   async scrapeJobs(urls: string[] = ALL_URLS, count: number = 10000): Promise<JobPost[]> {
     console.log('📊 Step 1: Scraping LinkedIn jobs...');
-    console.log(`🌍 Using ${urls.length} URLs, requesting ${count} jobs`);
+
+    // Rotate: pick 10 URLs per day from the full list
+    const DAILY_URL_COUNT = 10;
+    const dailyUrls = this.rotateDailyUrls(urls, DAILY_URL_COUNT);
+    urls = dailyUrls;
+
+    console.log(`🌍 Using ${urls.length} URLs today, requesting ${count} jobs`);
 
     let datasetId: string;
 
@@ -933,19 +955,19 @@ class CompleteWorkflowManager {
     let generated = 0;
     const instantlyBatch: InstantlyRecord[] = [];
     const BATCH_SIZE = 50;
-    const jobPostContactCount = new Map<string, number>();
+    const titleCompanySent = new Set<string>();
 
     for (let i = 0; i < limitedLeads.length; i++) {
       const lead = limitedLeads[i];
 
-      // Max 2 contacts per job post per run
-      const leadJobUrls = lead.jobPostUrls || [];
-      const jobKey = leadJobUrls.length > 0 
-        ? leadJobUrls.map(u => `${lead.companyName.toLowerCase().trim()}__${u}`).join('|')
-        : lead.companyName.toLowerCase().trim();
-      const currentCount = jobPostContactCount.get(jobKey) || 0;
-      if (currentCount >= 2) {
-        console.log(`   ⏭️  Skipping ${lead.firstName} @ ${lead.companyName} (2 contacts already sent for this job post)`);
+      // Only 1 email per unique job title + company combination
+      const roleTitles = (lead.openRoles_titles || '').toLowerCase().split(',').map(t => t.trim()).filter(Boolean);
+      const companyKey = lead.companyName.toLowerCase().trim();
+      const alreadySent = roleTitles.length > 0
+        ? roleTitles.every(title => titleCompanySent.has(`${title}__${companyKey}`))
+        : titleCompanySent.has(companyKey);
+      if (alreadySent) {
+        console.log(`   ⏭️  Skipping ${lead.firstName} @ ${lead.companyName} (already contacted for same role+company)`);
         continue;
       }
 
@@ -1003,7 +1025,12 @@ class CompleteWorkflowManager {
       this.appendProcessedKeys(dedupKeys);
 
       instantlyBatch.push(record);
-      jobPostContactCount.set(jobKey, (jobPostContactCount.get(jobKey) || 0) + 1);
+      // Mark role titles as sent for this company
+      if (roleTitles.length > 0) {
+        roleTitles.forEach(title => titleCompanySent.add(`${title}__${companyKey}`));
+      } else {
+        titleCompanySent.add(companyKey);
+      }
       generated++;
 
       // Push to Instantly in batches
