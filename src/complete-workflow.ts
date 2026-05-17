@@ -272,20 +272,23 @@ class CompleteWorkflowManager {
         const runDate = (run.finishedAt || run.startedAt || '').slice(0, 10);
         if (runDate !== today || !run.defaultDatasetId) continue;
 
-        // If we know expected URL count, verify the run used same input size
+        // Validate the run used the same URL set by checking input
         if (expectedUrlCount && run.id) {
           try {
             const inputResp = await axios.get(
               `https://api.apify.com/v2/actor-runs/${run.id}/input`,
               { params: { token: this.apifyToken }, timeout: 10000 }
             );
-            const inputUrls = inputResp.data?.urls || inputResp.data?.startUrls || [];
+            const inputData = inputResp.data;
+            const inputUrls = inputData?.urls || inputData?.startUrls || inputData?.input?.urls || [];
             const inputCount = Array.isArray(inputUrls) ? inputUrls.length : 0;
-            if (inputCount > 0 && inputCount !== expectedUrlCount) {
-              continue; // Different URL set, skip this run
+            if (inputCount !== expectedUrlCount) {
+              console.log(`   ⏭️  Skipping run ${run.id.slice(0,8)}... (${inputCount} URLs ≠ expected ${expectedUrlCount})`);
+              continue; // Different URL set or can't determine — don't reuse
             }
           } catch {
-            // If we can't read input, skip URL count validation
+            console.log(`   ⏭️  Skipping run ${run.id.slice(0,8)}... (can't verify input — won't reuse)`);
+            continue; // If we can't verify, don't reuse (fail closed)
           }
         }
 
@@ -344,7 +347,7 @@ class CompleteWorkflowManager {
     return this.CAMPAIGNS[key];
   }
 
-  async scrapeJobs(urls?: string[], count: number = 15000, forceNewRun: boolean = false): Promise<JobPost[]> {
+  async scrapeJobs(urls?: string[], count: number = 15000): Promise<JobPost[]> {
     console.log('📊 Step 1: Scraping LinkedIn jobs...');
 
     if (!urls) {
@@ -359,12 +362,7 @@ class CompleteWorkflowManager {
 
     let datasetId: string;
 
-    // Check for a reusable run from today (only for primary region, not forced new runs)
-    const reusable = !forceNewRun ? await this.getReusableJobsRun(urls.length) : null;
-    if (reusable) {
-      console.log(`   ♻️  Found today's run with ${reusable.itemCount} jobs — reusing dataset`);
-      datasetId = reusable.datasetId;
-    } else {
+    {
       // Start a new actor run
       const startResponse = await axios.post(
         `https://api.apify.com/v2/acts/${this.JOBS_ACTOR}/runs`,
@@ -509,8 +507,7 @@ class CompleteWorkflowManager {
    */
   private async scrapeRegion(region: typeof this.REGION_SCHEDULE[number]): Promise<JobPost[]> {
     console.log(`   🌍 Scraping additional region: ${region.label} (${region.urls.length} URLs)...`);
-    // Force a NEW actor run — do not reuse the primary region's run
-    const jobs = await this.scrapeJobs(region.urls, 15000, true);
+    const jobs = await this.scrapeJobs(region.urls);
     return jobs;
   }
 
