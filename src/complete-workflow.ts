@@ -587,9 +587,9 @@ class CompleteWorkflowManager {
         ],
         seniority: ['c_suite', 'vp', 'director', 'manager'],
         functions: ['human_resources', 'engineering', 'operations'],
-        countries: ['United States', 'United Kingdom', 'Germany', 'France', 'Canada', 'Australia'],
-        leadCount: 15000,
-        requireEmail: true
+        leadCount: 50000,
+        requireEmail: true,
+        emailVerified: true
       });
 
       const runInfo = await this.leadsRunner.runAsync();

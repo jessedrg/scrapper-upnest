@@ -263,6 +263,7 @@ export class LeadsScraperTaskRunner extends ApifyTaskManager {
     companyDomains?: string[];
     leadCount?: number;
     requireEmail?: boolean;
+    emailVerified?: boolean;
   } = {}): Promise<void> {
     const config: Partial<LeadsScraperTaskInput> = {
       totalResults: options.leadCount || 1000,
@@ -276,6 +277,7 @@ export class LeadsScraperTaskRunner extends ApifyTaskManager {
     if (options.functions) config.functionIncludes = options.functions;
     if (options.countries) config.personLocationCountryIncludes = options.countries;
     if (options.companyDomains) config.companyDomain = options.companyDomains;
+    if (options.emailVerified) config.emailStatusIncludes = ['verified'];
 
     await this.updateConfig(config);
     console.log('Configured for decision makers extraction');
