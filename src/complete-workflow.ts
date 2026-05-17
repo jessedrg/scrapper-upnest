@@ -13,7 +13,7 @@
 import axios from 'axios';
 import { LeadsScraperTaskRunner } from './leads-scraper-task-runner.js';
 import { buildOutreachPrompt, callClaude, type MergedLead, type OutreachEmails } from './claude.js';
-import { US_URLS, EUROPE_URLS, ASIA_URLS, ALL_URLS } from '../config/urls.js';
+import { US_URLS, EUROPE_URLS, ASIA_URLS, ALL_URLS, REMOTE_URLS } from '../config/urls.js';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as dotenv from 'dotenv';
@@ -55,14 +55,13 @@ interface InstantlyRecord {
   companyName: string;
   jobTitle: string;
   linkedIn: string;
+  email1_subject: string;
   email1_body: string;
-  email2_body: string;
-  email3_body: string;
   jobPostUrls: string;
   pause_until: string;
-  email1_subject: string;
-  email2_subject: string;
-  email3_subject: string;
+  campaignRegion: string;
+  campaignTimezone: string;
+  campaignId: string;
 }
 
 
@@ -77,6 +76,28 @@ class CompleteWorkflowManager {
   private readonly DEDUP_FILE = path.join(process.cwd(), 'output', 'processed_keys.txt');
   private readonly INSTANTLY_API_KEY = process.env.INSTANTLY_API_KEY || '';
   private readonly INSTANTLY_CAMPAIGN_ID = process.env.INSTANTLY_CAMPAIGN_ID || '';
+  private readonly CAMPAIGNS = {
+    us: {
+      id: process.env.INSTANTLY_CAMPAIGN_ID_US || process.env.INSTANTLY_CAMPAIGN_ID || '',
+      region: 'US',
+      timezone: 'America/New_York'
+    },
+    europe: {
+      id: process.env.INSTANTLY_CAMPAIGN_ID_EUROPE || process.env.INSTANTLY_CAMPAIGN_ID || '',
+      region: 'Europe',
+      timezone: 'Europe/London'
+    },
+    apac: {
+      id: process.env.INSTANTLY_CAMPAIGN_ID_APAC || process.env.INSTANTLY_CAMPAIGN_ID || '',
+      region: 'APAC',
+      timezone: 'Asia/Singapore'
+    },
+    remote: {
+      id: process.env.INSTANTLY_CAMPAIGN_ID_REMOTE || process.env.INSTANTLY_CAMPAIGN_ID || '',
+      region: 'Remote',
+      timezone: 'America/New_York'
+    }
+  };
 
   constructor() {
     this.apifyToken = process.env.APIFY_TOKEN || '';
@@ -252,34 +273,35 @@ class CompleteWorkflowManager {
   }
 
   /**
-   * Rotate URLs daily: pick DAILY_URL_COUNT URLs based on day-of-year.
-   * Cycles through all URLs over multiple days so every URL gets used.
+   * Daily region rotation: cycles through US → Europe → APAC → Remote.
+   * Returns the URLs for today's region + which campaign to use.
    */
-  private rotateDailyUrls(allUrls: string[], dailyCount: number = 10): string[] {
+  private readonly REGION_SCHEDULE: Array<{ key: 'us' | 'europe' | 'apac' | 'remote'; label: string; urls: string[] }> = [
+    { key: 'us',     label: 'US',     urls: US_URLS },
+    { key: 'europe', label: 'Europe', urls: EUROPE_URLS },
+    { key: 'apac',   label: 'APAC',   urls: ASIA_URLS },
+    { key: 'remote', label: 'Remote', urls: REMOTE_URLS }
+  ];
+
+  private todayRegion: typeof this.REGION_SCHEDULE[number] | null = null;
+
+  private getTodayRegion(): typeof this.REGION_SCHEDULE[number] {
+    if (this.todayRegion) return this.todayRegion;
     const now = new Date();
     const startOfYear = new Date(now.getFullYear(), 0, 0);
     const dayOfYear = Math.floor((now.getTime() - startOfYear.getTime()) / (1000 * 60 * 60 * 24));
-    const total = allUrls.length;
-    const startIndex = (dayOfYear * dailyCount) % total;
-    
-    const selected: string[] = [];
-    for (let i = 0; i < dailyCount; i++) {
-      selected.push(allUrls[(startIndex + i) % total]);
-    }
-    
-    console.log(`   📅 Day ${dayOfYear}: rotating URLs ${startIndex}–${(startIndex + dailyCount - 1) % total} of ${total} total`);
-    return selected;
+    this.todayRegion = this.REGION_SCHEDULE[dayOfYear % this.REGION_SCHEDULE.length];
+    return this.todayRegion;
   }
 
-  async scrapeJobs(urls: string[] = ALL_URLS, count: number = 10000): Promise<JobPost[]> {
+  async scrapeJobs(urls?: string[], count: number = 10000): Promise<JobPost[]> {
     console.log('📊 Step 1: Scraping LinkedIn jobs...');
 
-    // Rotate: pick 10 URLs per day from the full list
-    const DAILY_URL_COUNT = 10;
-    const dailyUrls = this.rotateDailyUrls(urls, DAILY_URL_COUNT);
-    urls = dailyUrls;
+    const region = this.getTodayRegion();
+    const campaign = this.CAMPAIGNS[region.key];
+    urls = region.urls;
 
-    console.log(`🌍 Using ${urls.length} URLs today, requesting ${count} jobs`);
+    console.log(`🌍 Today's region: ${region.label} (${campaign.timezone}) — ${urls.length} URLs`);
 
     let datasetId: string;
 
@@ -860,7 +882,8 @@ class CompleteWorkflowManager {
       openRoles_descriptions: companyJobs.slice(0, 3).map(job => (job.description || '').slice(0, 1200)).filter(Boolean).join('\n---\n'),
       personCity: decisionMaker.location?.split(',').map(s => s.trim())[0],
       personCountry: decisionMaker.location?.split(',').map(s => s.trim()).pop(),
-      jobPostUrls: companyJobs.map(job => job.linkedInUrl).filter(Boolean) as string[]
+      jobPostUrls: companyJobs.map(job => job.linkedInUrl).filter(Boolean) as string[],
+      postedDate: companyJobs[0]?.posted_date
     };
   }
 
@@ -878,6 +901,11 @@ class CompleteWorkflowManager {
     if (titleText.includes('data')) return 'data';
     
     return 'general';
+  }
+
+  private getCampaignForLead(_lead: MergedLead): { id: string; region: string; timezone: string } {
+    const region = this.getTodayRegion();
+    return this.CAMPAIGNS[region.key];
   }
 
   /**
@@ -949,7 +977,7 @@ class CompleteWorkflowManager {
     if (!fs.existsSync(outputDir)) fs.mkdirSync(outputDir, { recursive: true });
 
     // Write CSV header
-    const headers = ['lastName','firstName','companyName','jobTitle','linkedIn','email1_body','email2_body','email3_body','jobPostUrls','pause_until','email1_subject','email2_subject','email3_subject'];
+    const headers = ['lastName','firstName','companyName','jobTitle','linkedIn','email1_subject','email1_body','jobPostUrls','pause_until','campaignRegion','campaignTimezone','campaignId'];
     fs.writeFileSync(csvPath, headers.join(',') + '\n');
 
     let generated = 0;
@@ -995,6 +1023,7 @@ class CompleteWorkflowManager {
 
       const pauseUntil = new Date();
       pauseUntil.setDate(pauseUntil.getDate() + 3);
+      const campaign = this.getCampaignForLead(lead);
 
       const record: InstantlyRecord = {
         lastName: lead.lastName,
@@ -1002,14 +1031,13 @@ class CompleteWorkflowManager {
         companyName: lead.companyName,
         jobTitle: lead.title,
         linkedIn: dm?.linkedIn || '',
+        email1_subject: result.email1_subject,
         email1_body: result.email1_body,
-        email2_body: result.email2_body,
-        email3_body: result.email3_body,
         jobPostUrls: jobUrls.join(' ||| '),
         pause_until: pauseUntil.toISOString(),
-        email1_subject: result.email1_subject,
-        email2_subject: result.email2_subject,
-        email3_subject: result.email3_subject
+        campaignRegion: campaign.region,
+        campaignTimezone: campaign.timezone,
+        campaignId: campaign.id
       };
 
       // Append row to CSV immediately
@@ -1063,7 +1091,34 @@ class CompleteWorkflowManager {
     records: InstantlyRecord[],
     decisionMakersMap: Map<string, DecisionMaker>
   ): Promise<void> {
-    console.log(`🚀 Step 9: Pushing ${records.length} leads to Instantly campaign...`);
+    console.log(`🚀 Step 9: Routing ${records.length} leads to Instantly campaigns...`);
+
+    const recordsByCampaign = new Map<string, InstantlyRecord[]>();
+    records.forEach(record => {
+      const campaignId = record.campaignId || this.INSTANTLY_CAMPAIGN_ID;
+      if (!campaignId) return;
+      const campaignRecords = recordsByCampaign.get(campaignId) || [];
+      campaignRecords.push(record);
+      recordsByCampaign.set(campaignId, campaignRecords);
+    });
+
+    if (recordsByCampaign.size === 0) {
+      console.log('   ⚠️  No campaign IDs configured. Leads are saved in CSV only.');
+      return;
+    }
+
+    for (const [campaignId, campaignRecords] of recordsByCampaign.entries()) {
+      await this.pushToInstantlyCampaign(campaignId, campaignRecords, decisionMakersMap);
+    }
+  }
+
+  private async pushToInstantlyCampaign(
+    campaignId: string,
+    records: InstantlyRecord[],
+    decisionMakersMap: Map<string, DecisionMaker>
+  ): Promise<void> {
+    const sample = records[0];
+    console.log(`   ➡️  ${records.length} leads → ${sample.campaignRegion} campaign (${sample.campaignTimezone})`);
 
     const leads = records.map(record => {
       // Find DM by name + company match
@@ -1079,14 +1134,12 @@ class CompleteWorkflowManager {
         custom_variables: {
           jobTitle: record.jobTitle,
           linkedIn: record.linkedIn,
+          email1_subject: record.email1_subject,
           email1_body: record.email1_body,
-          email2_body: record.email2_body,
-          email3_body: record.email3_body,
           jobPostUrls: record.jobPostUrls,
           pause_until: record.pause_until,
-          email1_subject: record.email1_subject,
-          email2_subject: record.email2_subject,
-          email3_subject: record.email3_subject
+          campaignRegion: record.campaignRegion,
+          campaignTimezone: record.campaignTimezone
         }
       };
     }).filter(lead => lead.email);
@@ -1102,7 +1155,7 @@ class CompleteWorkflowManager {
         const response = await axios.post(
           'https://api.instantly.ai/api/v2/leads/add',
           {
-            campaign_id: this.INSTANTLY_CAMPAIGN_ID,
+            campaign_id: campaignId,
             leads: leads.map(lead => ({
               email: lead.email,
               first_name: lead.first_name,
@@ -1143,11 +1196,14 @@ class CompleteWorkflowManager {
    */
   async executeCompleteWorkflow(urls?: string[], limit: number = 3): Promise<void> {
     try {
+      const region = this.getTodayRegion();
+      const campaign = this.CAMPAIGNS[region.key];
       console.log('🚀 Starting Complete Workflow: Jobs → Leads → Verify → Dedup → Claude → Instantly\n');
+      console.log(`🌍 Region: ${region.label} | Timezone: ${campaign.timezone} | Campaign: ${campaign.id || 'NOT SET'}`);
       console.log(`🔢 Outreach: ${limit > 0 ? limit + ' records' : 'NO LIMIT'}\n`);
 
-      // Step 1: Scrape jobs
-      const jobs = await this.scrapeJobs(urls);
+      // Step 1: Scrape jobs (uses today's region URLs automatically)
+      const jobs = await this.scrapeJobs();
 
       // Step 2: Extract domains
       const domainMap = this.extractCompanyDomains(jobs);

@@ -1,8 +1,8 @@
 /**
  * Claude API Integration for Outreach Generation
  * 
- * Generates personalized 3-email sequences using Claude Sonnet
- * with the "3 candidates in pipeline" angle
+ * Generates personalized single outreach email using Claude Sonnet
+ * with rotating angles, seniority-adaptive tone, and urgency signals
  */
 
 interface ClaudeConfig {
@@ -14,10 +14,6 @@ interface ClaudeConfig {
 interface OutreachEmails {
   email1_subject: string;
   email1_body: string;
-  email2_subject: string;
-  email2_body: string;
-  email3_subject: string;
-  email3_body: string;
 }
 
 interface MergedLead {
@@ -40,11 +36,51 @@ interface MergedLead {
   openRoles_descriptions?: string;
   openRoles_count?: string;
   jobPostUrls?: string[];
+  postedDate?: string;
 }
 
 function truncate(s: string | undefined, n: number): string {
   if (!s) return '';
   return s.length > n ? s.slice(0, n) + '...' : s;
+}
+
+/**
+ * Detect seniority tier from recipient's job title
+ */
+function getSeniorityTier(title: string): 'executive' | 'director' | 'manager' | 'other' {
+  const t = title.toLowerCase();
+  if (/\b(ceo|cto|cfo|coo|cro|chief|founder|co-founder|partner|president|vp|vice president)\b/.test(t)) return 'executive';
+  if (/\b(director|head of|svp|senior vice)\b/.test(t)) return 'director';
+  if (/\b(manager|lead|team lead|supervisor)\b/.test(t)) return 'manager';
+  return 'other';
+}
+
+/**
+ * Calculate job age in days from posted date
+ */
+function getJobAgeDays(postedDate?: string): number | null {
+  if (!postedDate) return null;
+  const posted = new Date(postedDate);
+  if (isNaN(posted.getTime())) return null;
+  return Math.floor((Date.now() - posted.getTime()) / (1000 * 60 * 60 * 24));
+}
+
+/**
+ * Pick an angle based on lead index for deterministic rotation
+ */
+function pickAngle(lead: MergedLead, jobAgeDays: number | null): { id: string; label: string } {
+  const angles = [
+    { id: 'pipeline', label: 'candidates in pipeline' },
+    { id: 'placement', label: 'recent similar placement' },
+    { id: 'passive', label: 'passive candidate match' }
+  ];
+  // If job is old (14+ days), always use urgency angle
+  if (jobAgeDays !== null && jobAgeDays >= 14) {
+    return { id: 'stale', label: 'role open for a while' };
+  }
+  // Deterministic rotation based on name hash
+  const hash = (lead.firstName + lead.companyName).split('').reduce((a, c) => a + c.charCodeAt(0), 0);
+  return angles[hash % angles.length];
 }
 
 export function buildOutreachPrompt(lead: MergedLead): string {
@@ -63,49 +99,104 @@ export function buildOutreachPrompt(lead: MergedLead): string {
   const roleLocations = lead.openRoles_locations || '';
   const roleDescriptions = truncate(lead.openRoles_descriptions, 2500);
   const roleCount = lead.openRoles_count || '';
-
   const jobPostUrlsList = (lead.jobPostUrls || []).slice(0, 3).join('\n');
 
-  return `You are writing a 3-email cold outreach sequence for Jesse, who runs Upnest Talent, a curated marketplace of senior candidates (engineering, product, growth, sales, marketing).
+  const seniority = getSeniorityTier(title);
+  const jobAgeDays = getJobAgeDays(lead.postedDate);
+  const angle = pickAngle(lead, jobAgeDays);
 
-The recipient is a contact at a company that has ACTIVE open roles right now. You have the FULL job descriptions below. Use them to craft hyper-specific candidate profiles that match EXACTLY what the role asks for.
+  const jobAgeContext = jobAgeDays !== null
+    ? `This role has been open for approximately ${jobAgeDays} day(s). USE this as an urgency signal if >= 7 days (e.g. "noticed this has been open for a few weeks").`
+    : 'Job age unknown. Do not reference how long it has been open.';
+
+  let seniorityInstructions: string;
+  switch (seniority) {
+    case 'executive':
+      seniorityInstructions = `The recipient is a C-level/VP executive. Be ULTRA concise. Max 35 words body (excluding bullets). No fluff. 2 candidate bullets max (8-10 words each). Respect their time.`;
+      break;
+    case 'director':
+      seniorityInstructions = `The recipient is a Director/Head of. Be concise but can include slightly more context. Max 45 words body. 2 candidate bullets (10-12 words each).`;
+      break;
+    default:
+      seniorityInstructions = `The recipient is a hiring manager or recruiter. Can include more technical detail. Max 50 words body. 2 candidate bullets (10-15 words each).`;
+      break;
+  }
+
+  let angleInstructions: string;
+  switch (angle.id) {
+    case 'pipeline':
+      angleInstructions = `ANGLE: "candidates in pipeline". Mention you have pre-vetted profiles that match their requirements. Frame as: "we have profiles in our network that match".`;
+      break;
+    case 'placement':
+      angleInstructions = `ANGLE: "recent placement". Reference that you recently placed someone in a similar role in the same industry/function. Frame as: "we just placed a [similar role] at a [similar type] company, have 2 more candidates from that search".`;
+      break;
+    case 'passive':
+      angleInstructions = `ANGLE: "passive candidate". Mention you have a passive candidate (not actively looking) who matches their specific requirements. Frame as: "have a passive candidate who fits, they're not on the market yet".`;
+      break;
+    case 'stale':
+      angleInstructions = `ANGLE: "urgency/stale role". The role has been open for a while. Reference this tactfully: "noticed this has been open for a bit, we might be able to help speed things up". Show you can deliver quickly.`;
+      break;
+    default:
+      angleInstructions = `ANGLE: "candidates in pipeline". Mention you have pre-vetted profiles that match.`;
+  }
+
+  return `You are writing a single cold outreach email for Jesse, who runs Upnest Talent, a curated marketplace of senior candidates (engineering, product, growth, sales, marketing).
+
+The recipient is a contact at a company that has ACTIVE open roles right now.
 
 WRITE IN ENGLISH. NO DASHES anywhere (not even em-dashes or en-dashes). Use commas or periods instead.
-Tone: direct, casual, lowercase where it feels natural. No formal openers like "I hope this finds you well". No emojis.
-Length: Email 1 max 55 words body (excluding candidate bullets). Email 2 max 25 words. Email 3 max 20 words.
-CTA is SOFT: offer to send 2-3 anonymized profiles, no call requested.
+Tone: direct, casual, lowercase where it feels natural. No formal openers. No emojis.
 
-STRICT STRUCTURE FOR EMAIL 1 (follow this EXACT spacing with blank lines between sections):
+${seniorityInstructions}
 
-hi [firstName], saw you're hiring a [Exact Role Title]. [one specific detail from job description].
+${angleInstructions}
+
+JOB AGE: ${jobAgeContext}
+
+HOOK RULES (CRITICAL):
+- Your opening line MUST reference something SPECIFIC from the company description, NOT just the role title.
+- Good: "hi [name], saw [company] just raised a series B / is expanding into [market] / launched [product]. noticed you're hiring a [role]."
+- Bad: "hi [name], saw you're hiring a [role]." (too generic, NEVER do this)
+- If company description is empty, reference the specific tech stack or unique requirement from the job description instead.
+
+CANDIDATE BULLET RULES:
+- Only 2 bullets, NOT 3.
+- Each bullet: 8-12 words max. Ultra specific.
+- Reference domain expertise, scale numbers (ARR, users, team size), or well-known company types.
+- Frame as TYPES of candidates, not fictional individuals. Say "ex-[type of company], scaled [thing] to [number]" not "John who did X".
+- NEVER say "experienced professional", "strong leader", "proven track record". Be concrete.
+
+SUBJECT LINE RULES:
+- NEVER use the same formula every time. Pick ONE of these based on what fits best:
+  1. "[exact role title] candidates for ${company}"
+  2. "re: your [exact role title] search"
+  3. "quick question about your [exact role title] hire"
+  4. "${company} + Upnest Talent"
+- Subject must be lowercase, short, feel like a real person wrote it.
+
+CTA RULES:
+- Vary the CTA. Pick ONE:
+  1. "want me to send over a couple anonymized profiles?"
+  2. "worth a look? can send profiles over today."
+  3. "one of them is in final stages elsewhere, let me know if you want to see profiles before they're gone."
+  4. "happy to send a quick shortlist, just say the word."
+- Match urgency to job age: if role is 14+ days old, use a more urgent CTA.
+
+STRICT STRUCTURE (follow this EXACT spacing with blank lines between sections):
+
+[hook: greeting + company-specific observation + role mention]
 \n
-have 3 candidates in our pipeline right now who match:
+[angle-specific bridge line introducing candidates]
 \n
-, [candidate 1: specific matching detail]
-, [candidate 2: different matching detail]
-, [candidate 3: different matching detail]
+, [candidate bullet 1]
+, [candidate bullet 2]
 \n
-want me to send over 2-3 anonymized profiles?
+[CTA]
 \n
 Jesse
 Upnest Talent
 
-IMPORTANT FORMATTING: Use \n between each section (greeting, intro line, candidates, CTA, signature). The email must breathe. Never write it as one dense paragraph.
-
-CANDIDATE BULLET RULES:
-- Each bullet must reference a SPECIFIC requirement from the FULL JOB DESCRIPTION below.
-- Make them feel like REAL senior people: mention industry background, scale (users, revenue, team size), or specific tech/domain.
-- NEVER use generic descriptions like "experienced professional" or "strong leader". Be concrete.
-- Keep each bullet to 15-20 words max.
-
-EMAIL 2: soft bump. "just checking if this landed, still have those 3 profiles ready for your [Role] role. want them?"
-EMAIL 3: breakup. "2 of the 3 accepted offers elsewhere. 1 still available. yes/no?"
-
-SUBJECT for Email 1: "3 candidates for your [Exact Role Title] role". Email 2: "Re: 3 candidates for your [Exact Role Title] role". Email 3: "closing the loop".
-
-PERSONALIZATION:
-- If openRoles_count > 1, pick the MOST senior or clearly defined role for the "3 candidates" angle.
-- If recipient title suggests they are NOT the hiring manager, in Email 2 ask to redirect.
+IMPORTANT FORMATTING: Use \n between each section. The email must breathe. Never write it as one dense paragraph.
 
 CONTEXT:
 Name: ${firstName} ${lastName}
@@ -131,10 +222,8 @@ Sign as:
 Jesse
 Upnest Talent
 
-(Email 2 and 3 just sign "Jesse")
-
 OUTPUT (strict JSON, no preamble, no code fences):
-{"email1_subject":"...","email1_body":"...","email2_subject":"...","email2_body":"...","email3_subject":"...","email3_body":"..."}`;
+{"email1_subject":"...","email1_body":"..."}`;
 }
 
 export async function callClaude(
@@ -190,11 +279,7 @@ export async function callClaude(
 
       if (
         !parsed.email1_subject ||
-        !parsed.email1_body ||
-        !parsed.email2_subject ||
-        !parsed.email2_body ||
-        !parsed.email3_subject ||
-        !parsed.email3_body
+        !parsed.email1_body
       ) {
         throw new Error('Missing required email fields in Claude response');
       }
