@@ -602,37 +602,33 @@ class CompleteWorkflowManager {
 
     let datasetId: string;
 
-    const reusable = await this.getReusableLeadsRun();
-    if (reusable) {
-      console.log(`   ♻️  Found today's leads run with ${reusable.itemCount} DMs — reusing dataset`);
-      datasetId = reusable.datasetId;
-    } else {
-      await this.leadsRunner.updateCompanyDomains(domains);
-      
-      await this.leadsRunner.setupDecisionMakers({
-        titles: [
-          'Head of Talent', 'Head of Talent Acquisition', 'Head of Recruiting',
-          'VP Talent', 'VP Talent Acquisition', 'VP People',
-          'Director of Recruiting', 'Director of Talent', 'Director of Talent Acquisition',
-          'Head of People', 'Head of HR',
-          'CTO', 'VP Engineering', 'VP of Engineering', 'Head of Engineering',
-          'Director of Engineering', 'Engineering Manager',
-          'Co-Founder', 'Founder', 'CEO'
-        ],
-        seniority: ['c_suite', 'vp', 'director', 'manager'],
-        functions: ['human_resources', 'engineering', 'operations'],
-        leadCount: 50000,
-        requireEmail: true,
-        emailVerified: true
-      });
+    // Always run fresh with current domains (no reuse — domains change each run)
+    await this.leadsRunner.updateCompanyDomains(domains);
+    console.log(`   📤 Sending ${domains.length} domains to Leads Scraper...`);
+    
+    await this.leadsRunner.setupDecisionMakers({
+      titles: [
+        'Head of Talent', 'Head of Talent Acquisition', 'Head of Recruiting',
+        'VP Talent', 'VP Talent Acquisition', 'VP People',
+        'Director of Recruiting', 'Director of Talent', 'Director of Talent Acquisition',
+        'Head of People', 'Head of HR',
+        'CTO', 'VP Engineering', 'VP of Engineering', 'Head of Engineering',
+        'Director of Engineering', 'Engineering Manager',
+        'Co-Founder', 'Founder', 'CEO'
+      ],
+      seniority: ['c_suite', 'vp', 'director', 'manager'],
+      functions: ['human_resources', 'engineering', 'operations'],
+      leadCount: 50000,
+      requireEmail: true,
+      emailVerified: true
+    });
 
-      const runInfo = await this.leadsRunner.runAsync();
-      const runId = runInfo.id;
-      datasetId = runInfo.defaultDatasetId;
-      console.log(`   🏃 Leads Scraper run started: ${runId}`);
+    const runInfo = await this.leadsRunner.runAsync();
+    const runId = runInfo.id;
+    datasetId = runInfo.defaultDatasetId;
+    console.log(`   🏃 Leads Scraper run started: ${runId}`);
 
-      await this.pollRunStatus(runId, 'Leads Scraper');
-    }
+    await this.pollRunStatus(runId, 'Leads Scraper');
 
     // Fetch dataset items
     console.log(`   📥 Fetching leads from dataset...`);
