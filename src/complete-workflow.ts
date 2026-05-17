@@ -886,35 +886,71 @@ class CompleteWorkflowManager {
 
     console.log(`🔍 Checking ${decisionMakers.length} decision makers against ${domainMap.size} domains + ${nameMap.size} company names`);
 
+    // Group matched DMs by company key so we can pick the best per company
+    const companyDMs = new Map<string, { dm: DecisionMaker; jobs: JobPost[]; matchType: string }[]>();
+
     decisionMakers.forEach(decisionMaker => {
       const dmCompany = decisionMaker.companyName || '';
       const dmNormalized = dmCompany.toLowerCase().replace(/[^a-z0-9]/g, '');
 
+      let companyJobs: JobPost[] | undefined;
+      let matchType = '';
+
       // 1. Try exact domain match
       const domain = this.extractDomain(dmCompany);
-      let companyJobs = domainMap.get(domain);
+      companyJobs = domainMap.get(domain);
       if (companyJobs && companyJobs.length > 0) {
-        matches++; byDomain++;
-        mergedLeads.push(this.createMergedLead(decisionMaker, companyJobs));
-        return;
+        matchType = 'domain';
       }
 
       // 2. Try normalized company name match
-      companyJobs = nameMap.get(dmNormalized);
-      if (companyJobs && companyJobs.length > 0) {
-        matches++; byName++;
-        mergedLeads.push(this.createMergedLead(decisionMaker, companyJobs));
-        return;
+      if (!matchType) {
+        companyJobs = nameMap.get(dmNormalized);
+        if (companyJobs && companyJobs.length > 0) {
+          matchType = 'name';
+        }
       }
 
       // 3. Try fuzzy/partial name match
-      const fuzzyMatch = this.findFuzzyMatch(dmCompany, domainMap);
-      if (fuzzyMatch) {
-        matches++; byFuzzy++;
-        mergedLeads.push(this.createMergedLead(decisionMaker, fuzzyMatch.jobs));
-        return;
+      if (!matchType) {
+        const fuzzyMatch = this.findFuzzyMatch(dmCompany, domainMap);
+        if (fuzzyMatch) {
+          companyJobs = fuzzyMatch.jobs;
+          matchType = 'fuzzy';
+        }
+      }
+
+      if (matchType && companyJobs) {
+        const key = dmNormalized || domain;
+        if (!companyDMs.has(key)) companyDMs.set(key, []);
+        companyDMs.get(key)!.push({ dm: decisionMaker, jobs: companyJobs, matchType });
       }
     });
+
+    // For each company, rank DMs and pick the best contact
+    for (const [companyKey, candidates] of companyDMs.entries()) {
+      const jobs = candidates[0].jobs;
+      const jobFunction = this.detectJobFunction(jobs);
+
+      // Sort by relevance score (highest first)
+      candidates.sort((a, b) => {
+        const scoreA = this.scoreDMRelevance(a.dm, jobFunction);
+        const scoreB = this.scoreDMRelevance(b.dm, jobFunction);
+        return scoreB - scoreA;
+      });
+
+      const best = candidates[0];
+      matches++;
+      if (best.matchType === 'domain') byDomain++;
+      else if (best.matchType === 'name') byName++;
+      else byFuzzy++;
+
+      mergedLeads.push(this.createMergedLead(best.dm, best.jobs));
+
+      if (candidates.length > 1) {
+        console.log(`   🏆 ${best.dm.companyName}: picked ${best.dm.firstName} ${best.dm.lastName} (${best.dm.jobTitle}) over ${candidates.length - 1} others for ${jobFunction} roles`);
+      }
+    }
 
     console.log(`✅ Found ${matches} matches (domain: ${byDomain}, name: ${byName}, fuzzy: ${byFuzzy}), merged ${mergedLeads.length} leads`);
     return mergedLeads;
@@ -986,6 +1022,90 @@ class CompleteWorkflowManager {
     if (titleText.includes('data')) return 'data';
     
     return 'general';
+  }
+
+  /**
+   * Detect the primary job function from a list of job posts
+   */
+  private detectJobFunction(jobs: JobPost[]): string {
+    const allTitles = jobs.map(j => j.title).join(' ').toLowerCase();
+    const allFunctions = jobs.map(j => j.jobFunction || '').join(' ').toLowerCase();
+    const combined = allTitles + ' ' + allFunctions;
+
+    if (/engineer|developer|sre|devops|architect|firmware|embedded|backend|frontend|full.?stack|infrastructure|platform|security/.test(combined)) return 'engineering';
+    if (/sales|account.?executive|sdr|bdr|business.?development|revenue|inside.?sales|closer/.test(combined)) return 'sales';
+    if (/marketing|growth|demand.?gen|seo|paid.?media|content|brand|performance/.test(combined)) return 'marketing';
+    if (/product.?manager|product.?lead|head.?of.?product|vp.?product|director.?of.?product/.test(combined)) return 'product';
+    if (/recruiter|talent.?acquisition|recruiting|sourcer|people.?ops|hr\b|human.?resource/.test(combined)) return 'hr';
+    if (/design|ux|ui|creative/.test(combined)) return 'design';
+    if (/data.?analyst|data.?scientist|analytics|business.?intelligence|bi\b/.test(combined)) return 'data';
+    if (/finance|controller|fp.?a|cfo|accountant|financial/.test(combined)) return 'finance';
+    if (/project.?manager|program.?manager|scrum|agile|pmo/.test(combined)) return 'pm';
+    if (/customer.?success|implementation|onboarding|support/.test(combined)) return 'cs';
+    if (/operations|chief.?of.?staff|office.?manager/.test(combined)) return 'operations';
+
+    return 'general';
+  }
+
+  /**
+   * Score a decision maker's relevance for a given job function
+   * Higher score = better match for outreach
+   */
+  private scoreDMRelevance(dm: DecisionMaker, jobFunction: string): number {
+    const title = (dm.jobTitle || '').toLowerCase();
+    let score = 0;
+
+    // Tier 1: Direct hiring authority for this function (100 pts)
+    const tier1Map: Record<string, RegExp> = {
+      engineering: /\b(cto|vp.?engineer|head.?of.?engineer|director.?of.?engineer|engineering.?manager|vp.?of.?engineer)\b/,
+      sales: /\b(cro|chief.?revenue|vp.?sales|head.?of.?sales|sales.?director|director.?of.?sales)\b/,
+      marketing: /\b(cmo|vp.?market|head.?of.?market|marketing.?director|director.?of.?market)\b/,
+      product: /\b(cpo|chief.?product|vp.?product|head.?of.?product|director.?of.?product)\b/,
+      hr: /\b(chro|vp.?people|head.?of.?people|head.?of.?talent|head.?of.?hr|vp.?talent|director.?of.?talent|head.?of.?recruit)\b/,
+      design: /\b(head.?of.?design|design.?director|vp.?design|creative.?director)\b/,
+      data: /\b(chief.?data|head.?of.?data|vp.?data|director.?of.?data|head.?of.?analytics)\b/,
+      finance: /\b(cfo|vp.?finance|head.?of.?finance|controller|director.?of.?finance)\b/,
+      pm: /\b(vp.?engineer|head.?of.?engineer|director.?of.?engineer|head.?of.?product)\b/,
+      cs: /\b(vp.?customer|head.?of.?customer|director.?of.?customer|head.?of.?success)\b/,
+      operations: /\b(coo|chief.?operating|vp.?operations|head.?of.?operations)\b/,
+      general: /\b(ceo|founder|co.?founder|cto|coo)\b/
+    };
+
+    if (tier1Map[jobFunction]?.test(title)) score += 100;
+
+    // Tier 2: Hiring-adjacent authority (60 pts)
+    const tier2Map: Record<string, RegExp> = {
+      engineering: /\b(head.?of.?talent|head.?of.?recruit|vp.?talent|director.?of.?recruit|talent.?acquisition)\b/,
+      sales: /\b(head.?of.?talent|vp.?operations|chief.?operating|head.?of.?revenue)\b/,
+      marketing: /\b(head.?of.?growth|ceo|founder|co.?founder)\b/,
+      product: /\b(cto|vp.?engineer|ceo|founder)\b/,
+      hr: /\b(coo|ceo|founder|co.?founder|head.?of.?operations)\b/,
+      design: /\b(cto|vp.?product|head.?of.?product|ceo)\b/,
+      data: /\b(cto|vp.?engineer|head.?of.?engineer)\b/,
+      finance: /\b(ceo|coo|founder|co.?founder)\b/,
+      pm: /\b(cto|vp.?product|head.?of.?product)\b/,
+      cs: /\b(coo|head.?of.?operations|vp.?operations|ceo)\b/,
+      operations: /\b(ceo|founder|co.?founder|cfo)\b/,
+      general: /\b(vp|head.?of|director)\b/
+    };
+
+    if (tier2Map[jobFunction]?.test(title)) score += 60;
+
+    // Tier 3: C-suite / founder catch-all (40 pts)
+    if (/\b(ceo|cto|coo|cfo|cmo|cro|cpo|founder|co.?founder)\b/.test(title)) score += 40;
+
+    // Seniority bonus
+    if (/\b(chief|c-suite|ceo|cto|coo|cfo)\b/.test(title)) score += 20;
+    if (/\b(vp|vice.?president)\b/.test(title)) score += 15;
+    if (/\b(head.?of|director)\b/.test(title)) score += 10;
+    if (/\b(manager|lead)\b/.test(title)) score += 5;
+
+    // Penalty: irrelevant function (e.g., HR person for engineering role gets less)
+    if (jobFunction === 'engineering' && /\b(marketing|sales|finance|legal)\b/.test(title)) score -= 30;
+    if (jobFunction === 'sales' && /\b(engineering|developer|architect)\b/.test(title)) score -= 30;
+    if (jobFunction === 'marketing' && /\b(engineering|developer|finance)\b/.test(title)) score -= 30;
+
+    return score;
   }
 
   private getCampaignForLead(lead: MergedLead): { id: string; region: string; timezone: string } {
