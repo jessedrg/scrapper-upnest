@@ -256,7 +256,8 @@ class CompleteWorkflowManager {
    * Check if there's a successful Jobs Scraper run from today we can reuse.
    * Only reuses if the run's input URL count matches what we'd send (prevents cross-region reuse).
    */
-  private async getReusableJobsRun(expectedUrlCount?: number): Promise<{ datasetId: string; itemCount: number } | null> {
+  private async getReusableJobsRun(): Promise<{ datasetId: string; itemCount: number }[]> {
+    const results: { datasetId: string; itemCount: number }[] = [];
     try {
       const resp = await axios.get(
         `https://api.apify.com/v2/acts/${this.JOBS_ACTOR}/runs`,
@@ -273,26 +274,6 @@ class CompleteWorkflowManager {
         const runDate = (run.finishedAt || run.startedAt || '').slice(0, 10);
         if (runDate !== today || !run.defaultDatasetId) continue;
 
-        // Validate the run used the same URL set by checking input
-        if (expectedUrlCount && run.id) {
-          try {
-            const inputResp = await axios.get(
-              `https://api.apify.com/v2/actor-runs/${run.id}/input`,
-              { params: { token: this.apifyToken }, timeout: 10000 }
-            );
-            const inputData = inputResp.data;
-            const inputUrls = inputData?.urls || inputData?.startUrls || inputData?.input?.urls || [];
-            const inputCount = Array.isArray(inputUrls) ? inputUrls.length : 0;
-            if (inputCount !== expectedUrlCount) {
-              console.log(`   ⏭️  Skipping run ${run.id.slice(0,8)}... (${inputCount} URLs ≠ expected ${expectedUrlCount})`);
-              continue; // Different URL set or can't determine — don't reuse
-            }
-          } catch {
-            console.log(`   ⏭️  Skipping run ${run.id.slice(0,8)}... (can't verify input — won't reuse)`);
-            continue; // If we can't verify, don't reuse (fail closed)
-          }
-        }
-
         // Verify it has items
         const dsResp = await axios.get(
           `https://api.apify.com/v2/datasets/${run.defaultDatasetId}`,
@@ -300,13 +281,13 @@ class CompleteWorkflowManager {
         );
         const itemCount = dsResp.data?.data?.itemCount || 0;
         if (itemCount > 0) {
-          return { datasetId: run.defaultDatasetId, itemCount };
+          results.push({ datasetId: run.defaultDatasetId, itemCount });
         }
       }
     } catch (err: any) {
       console.log(`   ⚠️  Could not check for reusable runs: ${err.message}`);
     }
-    return null;
+    return results;
   }
 
   /**
@@ -364,13 +345,8 @@ class CompleteWorkflowManager {
 
     let datasetId: string;
 
-    // Try to reuse a successful run from today with matching URL count
-    const reusable = await this.getReusableJobsRun(urls.length);
-    if (reusable) {
-      console.log(`   ♻️  Reusing today's run with ${reusable.itemCount} jobs`);
-      datasetId = reusable.datasetId;
-    } else {
-      // Start a new actor run
+    // Start a new actor run
+    {
       const startResponse = await axios.post(
         `https://api.apify.com/v2/acts/${this.JOBS_ACTOR}/runs`,
         {
@@ -407,9 +383,19 @@ class CompleteWorkflowManager {
     const rawJobs = Array.isArray(itemsResponse.data) ? itemsResponse.data : [];
     console.log(`   📦 Raw jobs from Apify: ${rawJobs.length}`);
 
-    // Filter out staffing agencies, headhunting firms, consulting giants, and large companies
+    const processedJobs = this.filterRawJobs(rawJobs, regionKey);
+
+    await this.saveToCSV(processedJobs, 'linkedin_jobs.csv');
+    console.log(`✅ Scraped ${processedJobs.length} real job postings`);
+    return processedJobs;
+  }
+
+  /**
+   * Filter raw Apify jobs: remove large companies, agencies, bad keywords/industries.
+   * Returns processed JobPost[] ready for the pipeline.
+   */
+  private filterRawJobs(rawJobs: any[], regionKey?: 'us' | 'europe' | 'apac' | 'remote'): JobPost[] {
     const EXCLUDED_COMPANY_NAMES = [
-      // Staffing & recruiting agencies
       'manpower', 'adecco', 'randstad', 'robert half', 'hays',
       'kelly services', 'kforce', 'insight global', 'teksystems', 'tek systems',
       'apex group', 'aerotek', 'allegis', 'express employment', 'spherion',
@@ -421,20 +407,17 @@ class CompleteWorkflowManager {
       'brainworks', 'jobspring', 'cybercoders', 'dice', 'hired',
       'toptal', 'andela', 'crossover', 'turing', 'g2i', 'gun.io',
       'the muse', 'vettery', 'triplebyte',
-      // Consulting/outsourcing giants
       'accenture', 'deloitte', 'cognizant', 'infosys', 'wipro', 'tcs',
       'tata consultancy', 'capgemini', 'atos', 'dxc technology', 'unisys',
       'hcl technologies', 'tech mahindra', 'lti mindtree', 'persistent systems',
       'globant', 'epam', 'luxoft', 'endava', 'softserve', 'grid dynamics',
       'thoughtworks', 'slalom', 'avanade', 'publicis sapient',
-      // BPO / outsourcing
       'concentrix', 'teleperformance', 'genpact', 'exl service', 'sutherland',
       'conduent', 'firstsource', 'css corp', 'alorica', 'sitel',
       'convergys', 'ttec', 'webhelp', 'majorel'
     ];
 
     const EXCLUDED_KEYWORDS = [
-      // Generic staffing/agency terms (checked in company name, description, slogan, industry)
       'staffing', 'recruiting agency', 'recruitment agency', 'headhunting',
       'headhunter', 'talent agency', 'talent acquisition firm', 'employment agency',
       'search firm', 'executive search', 'placement agency', 'placement firm',
@@ -455,7 +438,6 @@ class CompleteWorkflowManager {
     let filteredOut = { large: 0, name: 0, keyword: 0, industry: 0 };
 
     const filteredJobs = rawJobs.filter((job: any) => {
-      // Check employee count — exclude >1000
       const empCount = parseInt(job.companyEmployeesCount || '0', 10);
       if (empCount > 1000) { filteredOut.large++; return false; }
 
@@ -466,18 +448,15 @@ class CompleteWorkflowManager {
         ? job.industries.join(' | ').toLowerCase()
         : (job.industries || '').toLowerCase();
 
-      // Check against known agency/consulting company names
       const isKnownAgency = EXCLUDED_COMPANY_NAMES.some(name =>
         companyLower.includes(name) || companyLower.replace(/[^a-z0-9]/g, '').includes(name.replace(/[^a-z0-9]/g, ''))
       );
       if (isKnownAgency) { filteredOut.name++; return false; }
 
-      // Check keywords in company name, slogan, description
       const allText = `${companyLower} ${sloganLower} ${descLower}`;
       const hasKeyword = EXCLUDED_KEYWORDS.some(kw => allText.includes(kw));
       if (hasKeyword) { filteredOut.keyword++; return false; }
 
-      // Check industry classification
       const isBadIndustry = EXCLUDED_INDUSTRIES.some(ind => industryRaw.includes(ind));
       if (isBadIndustry) { filteredOut.industry++; return false; }
 
@@ -485,10 +464,9 @@ class CompleteWorkflowManager {
     });
 
     console.log(`   🚫 Filtered out: ${filteredOut.large} large (>1000), ${filteredOut.name} known agencies, ${filteredOut.keyword} by keywords, ${filteredOut.industry} by industry`);
-
     console.log(`   🔍 After filtering: ${filteredJobs.length} jobs (removed ${rawJobs.length - filteredJobs.length} agencies/large companies)`);
 
-    const processedJobs: JobPost[] = filteredJobs.map((job: any) => ({
+    return filteredJobs.map((job: any) => ({
       title: job.title || '',
       company: job.companyName || job.company || '',
       location: job.location || '',
@@ -504,10 +482,6 @@ class CompleteWorkflowManager {
       jobFunction: job.jobFunction || '',
       sourceRegion: regionKey
     }));
-
-    await this.saveToCSV(processedJobs, 'linkedin_jobs.csv');
-    console.log(`✅ Scraped ${processedJobs.length} real job postings`);
-    return processedJobs;
   }
 
   /**
@@ -1285,22 +1259,54 @@ class CompleteWorkflowManager {
       console.log(`🌍 Region: ${region.label} | Timezone: ${campaign.timezone} | Campaign: ${campaign.id || 'NOT SET'}`);
       console.log(`🔢 Outreach: ${limit > 0 ? limit + ' records' : 'NO LIMIT'}\n`);
 
-      // Step 1: Scrape jobs — add regions until we hit 13K+ minimum
-      let jobs = await this.scrapeJobs();
+      // Step 1: Check for reusable runs from today first
+      let jobs: JobPost[] = [];
+      const todaysRuns = await this.getReusableJobsRun();
 
-      while (jobs.length < this.MIN_JOBS_TARGET) {
-        const nextRegion = this.getNextRegion();
-        if (!nextRegion) {
-          console.log(`   ⚠️  All regions exhausted. Total jobs: ${jobs.length}`);
-          break;
+      if (todaysRuns.length > 0) {
+        const totalItems = todaysRuns.reduce((sum, r) => sum + r.itemCount, 0);
+        console.log(`   ♻️  Found ${todaysRuns.length} run(s) from today with ${totalItems} total raw jobs`);
+
+        if (totalItems >= this.MIN_JOBS_TARGET) {
+          console.log(`   ✅ Already have ${totalItems} raw jobs — reusing all datasets (no new Apify runs needed)`);
+          // Fetch and merge all datasets
+          for (const run of todaysRuns) {
+            console.log(`   📥 Fetching dataset (${run.itemCount} items)...`);
+            const itemsResp = await axios.get(
+              `https://api.apify.com/v2/datasets/${run.datasetId}/items`,
+              { params: { token: this.apifyToken, format: 'json' }, timeout: 120000 }
+            );
+            const rawJobs = Array.isArray(itemsResp.data) ? itemsResp.data : [];
+            const filtered = this.filterRawJobs(rawJobs);
+            jobs = [...jobs, ...filtered];
+          }
+          console.log(`   🔍 After filtering all datasets: ${jobs.length} jobs`);
+        } else {
+          console.log(`   📈 Only ${totalItems} raw jobs from today — will scrape more regions`);
         }
-        console.log(`\n   📈 Only ${jobs.length} jobs from ${this.todayRegions.slice(0, -1).map(r => r.label).join(' + ')}. Adding ${nextRegion.label}...`);
-        const extraJobs = await this.scrapeRegion(nextRegion);
-        jobs = [...jobs, ...extraJobs];
-        console.log(`   ✅ Total jobs now: ${jobs.length}`);
       }
 
-      console.log(`\n🌍 Regions used today: ${this.todayRegions.map(r => r.label).join(' + ')} (${jobs.length} jobs total)`);
+      // If not enough from reused runs, scrape new regions
+      if (jobs.length < this.MIN_JOBS_TARGET) {
+        if (jobs.length === 0) {
+          // No reused data — scrape primary region
+          jobs = await this.scrapeJobs();
+        }
+
+        while (jobs.length < this.MIN_JOBS_TARGET) {
+          const nextRegion = this.getNextRegion();
+          if (!nextRegion) {
+            console.log(`   ⚠️  All regions exhausted. Total jobs: ${jobs.length}`);
+            break;
+          }
+          console.log(`\n   📈 Only ${jobs.length} jobs. Adding ${nextRegion.label}...`);
+          const extraJobs = await this.scrapeRegion(nextRegion);
+          jobs = [...jobs, ...extraJobs];
+          console.log(`   ✅ Total jobs now: ${jobs.length}`);
+        }
+      }
+
+      console.log(`\n🌍 Total: ${jobs.length} filtered jobs`);
 
       // Step 2: Extract domains
       const domainMap = this.extractCompanyDomains(jobs);
