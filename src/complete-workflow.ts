@@ -417,9 +417,9 @@ class CompleteWorkflowManager {
     let filteredOut = { large: 0, name: 0, keyword: 0, industry: 0 };
 
     const filteredJobs = rawJobs.filter((job: any) => {
-      // Check employee count — exclude >500
+      // Check employee count — exclude >1000
       const empCount = parseInt(job.companyEmployeesCount || '0', 10);
-      if (empCount > 500) { filteredOut.large++; return false; }
+      if (empCount > 1000) { filteredOut.large++; return false; }
 
       const companyLower = (job.companyName || '').toLowerCase().trim();
       const descLower = (job.companyDescription || '').toLowerCase();
@@ -446,7 +446,7 @@ class CompleteWorkflowManager {
       return true;
     });
 
-    console.log(`   🚫 Filtered out: ${filteredOut.large} large (>500), ${filteredOut.name} known agencies, ${filteredOut.keyword} by keywords, ${filteredOut.industry} by industry`);
+    console.log(`   🚫 Filtered out: ${filteredOut.large} large (>1000), ${filteredOut.name} known agencies, ${filteredOut.keyword} by keywords, ${filteredOut.industry} by industry`);
 
     console.log(`   🔍 After filtering: ${filteredJobs.length} jobs (removed ${rawJobs.length - filteredJobs.length} agencies/large companies)`);
 
