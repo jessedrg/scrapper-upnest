@@ -1357,34 +1357,26 @@ class CompleteWorkflowManager {
       // Step 2: Extract domains
       const domainMap = this.extractCompanyDomains(jobs);
 
-      // Step 3: Scrape decision makers
+      // Step 3: Scrape decision makers (emails already verified by Leads Scraper)
       const decisionMakers = await this.scrapeDecisionMakers(Array.from(domainMap.keys()));
 
-      // Step 4: Verify emails
-      const verifiedLeads = await this.verifyEmails(decisionMakers);
-
-      if (verifiedLeads.length === 0) {
-        console.log('❌ No verified emails found. Cannot continue.');
-        return;
-      }
-
-      // Step 5: Merge data (only verified leads)
-      const mergedLeads = this.mergeJobsAndLeads(verifiedLeads, domainMap);
+      // Step 4: Merge data
+      const mergedLeads = this.mergeJobsAndLeads(decisionMakers, domainMap);
 
       if (mergedLeads.length === 0) {
         console.log('❌ No merged leads found. Cannot continue.');
         return;
       }
 
-      // Step 6: Deduplicate
-      const { leads: newLeads, decisionMakersMap } = this.deduplicateLeads(mergedLeads, verifiedLeads, domainMap);
+      // Step 5: Deduplicate
+      const { leads: newLeads, decisionMakersMap } = this.deduplicateLeads(mergedLeads, decisionMakers, domainMap);
 
       if (newLeads.length === 0) {
         console.log('✅ All leads already processed. Nothing new to send.');
         return;
       }
 
-      // Step 7+8: Generate emails + write CSV + dedup + Instantly (incremental)
+      // Step 6+7: Generate emails + write CSV + dedup + Instantly (incremental)
       const generated = await this.generateAndExport(newLeads, domainMap, decisionMakersMap, limit);
 
       // Clean up temporary CSVs (dedup file in output/ persists on volume)
@@ -1402,7 +1394,6 @@ class CompleteWorkflowManager {
       console.log(`   Jobs scraped: ${jobs.length}`);
       console.log(`   Companies found: ${domainMap.size}`);
       console.log(`   Decision makers: ${decisionMakers.length}`);
-      console.log(`   Verified emails: ${verifiedLeads.length}`);
       console.log(`   Merged leads: ${mergedLeads.length}`);
       console.log(`   New (not duped): ${newLeads.length}`);
       console.log(`   Emails generated: ${generated}`);

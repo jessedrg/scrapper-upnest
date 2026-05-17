@@ -29,6 +29,7 @@ export interface LeadsScraperTaskInput extends TaskInput {
   personLocationCountryExcludes?: string[];
   companyKeywords?: string[];
   companyDomain?: string[];
+  companyDomainIncludes?: string[];
   companySize?: string[];
   companyRevenueRange?: string[];
   companyFundingRange?: string[];
@@ -69,8 +70,9 @@ export class LeadsScraperTaskRunner extends ApifyTaskManager {
    * Update company domains
    */
   async updateCompanyDomains(domains: string[]): Promise<void> {
-    await this.updateConfig({ companyDomain: domains });
-    console.log(`Updated company domains with ${domains.length} entries`);
+    const cleanDomains = domains.map(d => d.replace(/^https?:\/\//, '').split('/')[0]);
+    await this.updateConfig({ companyDomainIncludes: cleanDomains });
+    console.log(`Updated company domains with ${cleanDomains.length} entries`);
   }
 
   /**
@@ -276,7 +278,7 @@ export class LeadsScraperTaskRunner extends ApifyTaskManager {
     if (options.seniority) config.seniorityIncludes = options.seniority;
     if (options.functions) config.functionIncludes = options.functions;
     if (options.countries) config.personLocationCountryIncludes = options.countries;
-    if (options.companyDomains) config.companyDomain = options.companyDomains;
+    if (options.companyDomains) config.companyDomainIncludes = options.companyDomains;
     if (options.emailVerified) config.emailStatusIncludes = ['verified'];
 
     await this.updateConfig(config);
