@@ -74,6 +74,7 @@ class CompleteWorkflowManager {
   private readonly MAILS_API_KEY = process.env.MAILS_API_KEY || '';
   private readonly MAILS_API_URL = 'https://api.mails.so/v1';
   private readonly DEDUP_FILE = path.join(process.cwd(), 'output', 'processed_keys.txt');
+  private readonly TMP_DIR = path.join(process.cwd(), 'tmp');
   private readonly INSTANTLY_API_KEY = process.env.INSTANTLY_API_KEY || '';
   private readonly INSTANTLY_CAMPAIGN_ID = process.env.INSTANTLY_CAMPAIGN_ID || '';
   private readonly CAMPAIGNS = {
@@ -174,6 +175,20 @@ class CompleteWorkflowManager {
     return keys;
   }
 
+  private cleanupTmpFiles(): void {
+    try {
+      if (fs.existsSync(this.TMP_DIR)) {
+        const files = fs.readdirSync(this.TMP_DIR);
+        for (const file of files) {
+          fs.unlinkSync(path.join(this.TMP_DIR, file));
+        }
+        console.log(`   🧹 Cleaned up ${files.length} temp files from tmp/`);
+      }
+    } catch (err: any) {
+      console.log(`   ⚠️  Could not clean tmp/: ${err.message}`);
+    }
+  }
+
   private appendProcessedKeys(newKeys: string[]): void {
     const outputDir = path.dirname(this.DEDUP_FILE);
     if (!fs.existsSync(outputDir)) {
@@ -206,7 +221,7 @@ class CompleteWorkflowManager {
    * Save data to CSV
    */
   private async saveToCSV(data: any[], filename: string): Promise<void> {
-    const csvPath = path.join(process.cwd(), 'output', filename);
+    const csvPath = path.join(this.TMP_DIR, filename);
     
     const outputDir = path.dirname(csvPath);
     if (!fs.existsSync(outputDir)) {
@@ -1031,7 +1046,7 @@ class CompleteWorkflowManager {
     console.log('🤖 Step 7+8: Generating emails & writing CSV incrementally...');
 
     const limitedLeads = limit > 0 ? mergedLeads.slice(0, limit) : mergedLeads;
-    const csvPath = path.join(process.cwd(), 'output', 'instantly_campaign.csv');
+    const csvPath = path.join(this.TMP_DIR, 'instantly_campaign.csv');
     const outputDir = path.dirname(csvPath);
     if (!fs.existsSync(outputDir)) fs.mkdirSync(outputDir, { recursive: true });
 
@@ -1311,13 +1326,13 @@ class CompleteWorkflowManager {
       // Step 7+8: Generate emails + write CSV + dedup + Instantly (incremental)
       const generated = await this.generateAndExport(newLeads, domainMap, decisionMakersMap, limit);
 
+      // Clean up temporary CSVs (dedup file in output/ persists on volume)
+      this.cleanupTmpFiles();
+
       console.log('\n✨ Complete workflow finished successfully!');
-      console.log('📁 Output files created:');
-      console.log('   - output/linkedin_jobs.csv (raw job data)');
-      console.log('   - output/decision_makers.csv (all decision makers)');
-      console.log('   - output/verified_decision_makers.csv (verified emails only)');
-      console.log('   - output/instantly_campaign.csv (final campaign with Claude emails)');
-      console.log('   - output/processed_keys.txt (dedup registry)');
+      console.log('📁 Output:');
+      console.log('   - output/processed_keys.txt (persistent dedup registry)');
+      console.log('   - tmp/ files cleaned up after push');
       if (this.INSTANTLY_API_KEY) {
         console.log('   - ✅ Leads pushed to Instantly campaign');
       }
