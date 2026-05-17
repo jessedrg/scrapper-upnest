@@ -611,16 +611,37 @@ class CompleteWorkflowManager {
     
     await this.leadsRunner.setupDecisionMakers({
       titles: [
+        // HR / Talent
         'Head of Talent', 'Head of Talent Acquisition', 'Head of Recruiting',
         'VP Talent', 'VP Talent Acquisition', 'VP People',
         'Director of Recruiting', 'Director of Talent', 'Director of Talent Acquisition',
-        'Head of People', 'Head of HR',
+        'Head of People', 'Head of HR', 'CHRO',
+        // Engineering
         'CTO', 'VP Engineering', 'VP of Engineering', 'Head of Engineering',
         'Director of Engineering', 'Engineering Manager',
+        // Sales
+        'VP Sales', 'Head of Sales', 'Sales Director', 'Director of Sales',
+        'CRO', 'Chief Revenue Officer', 'Head of Revenue',
+        // Marketing
+        'CMO', 'VP Marketing', 'Head of Marketing', 'Marketing Director',
+        'Director of Marketing', 'Head of Growth',
+        // Product
+        'CPO', 'VP Product', 'Head of Product', 'Director of Product',
+        // Design
+        'Head of Design', 'VP Design', 'Design Director', 'Creative Director',
+        // Data
+        'Head of Data', 'VP Data', 'Director of Data', 'Head of Analytics',
+        // Finance
+        'CFO', 'VP Finance', 'Head of Finance', 'Controller', 'Director of Finance',
+        // Operations
+        'COO', 'VP Operations', 'Head of Operations', 'Chief of Staff',
+        // Customer Success / Support
+        'VP Customer Success', 'Head of Customer Success', 'Director of Customer Success',
+        // Leadership
         'Co-Founder', 'Founder', 'CEO'
       ],
       seniority: ['c_suite', 'vp', 'director', 'manager'],
-      functions: ['human_resources', 'engineering', 'operations'],
+      functions: ['human_resources', 'engineering', 'operations', 'sales', 'marketing', 'finance', 'information_technology', 'business_development', 'support'],
       companyDomains: fullDomains,
       leadCount: 50000,
       requireEmail: true,
