@@ -948,29 +948,26 @@ class CompleteWorkflowManager {
       }
     });
 
-    // For each company, rank DMs and pick the best contact
+    // For each company, pick the best contact based on job function
     for (const [companyKey, candidates] of companyDMs.entries()) {
       const jobs = candidates[0].jobs;
       const jobFunction = this.detectJobFunction(jobs);
 
-      // Sort by relevance score (highest first)
-      candidates.sort((a, b) => {
-        const scoreA = this.scoreDMRelevance(a.dm, jobFunction);
-        const scoreB = this.scoreDMRelevance(b.dm, jobFunction);
-        return scoreB - scoreA;
-      });
+      // Priority order per function — pick the first match found
+      const priorityTitles = this.getTitlePriority(jobFunction);
+      
+      let best = candidates[0]; // fallback: first available
+      for (const priority of priorityTitles) {
+        const found = candidates.find(c => priority.test(c.dm.jobTitle.toLowerCase()));
+        if (found) { best = found; break; }
+      }
 
-      const best = candidates[0];
       matches++;
       if (best.matchType === 'domain') byDomain++;
       else if (best.matchType === 'name') byName++;
       else byFuzzy++;
 
       mergedLeads.push(this.createMergedLead(best.dm, best.jobs));
-
-      if (candidates.length > 1) {
-        console.log(`   🏆 ${best.dm.companyName}: picked ${best.dm.firstName} ${best.dm.lastName} (${best.dm.jobTitle}) over ${candidates.length - 1} others for ${jobFunction} roles`);
-      }
     }
 
     console.log(`✅ Found ${matches} matches (domain: ${byDomain}, name: ${byName}, fuzzy: ${byFuzzy}), merged ${mergedLeads.length} leads`);
@@ -1069,64 +1066,79 @@ class CompleteWorkflowManager {
   }
 
   /**
-   * Score a decision maker's relevance for a given job function
-   * Higher score = better match for outreach
+   * Get priority list of title patterns for a job function.
+   * Returns regexes in order — first match wins.
+   * If no match, the caller falls back to any available contact.
    */
-  private scoreDMRelevance(dm: DecisionMaker, jobFunction: string): number {
-    const title = (dm.jobTitle || '').toLowerCase();
-    let score = 0;
-
-    // Tier 1: Direct hiring authority for this function (100 pts)
-    const tier1Map: Record<string, RegExp> = {
-      engineering: /\b(cto|vp.?engineer|head.?of.?engineer|director.?of.?engineer|engineering.?manager|vp.?of.?engineer)\b/,
-      sales: /\b(cro|chief.?revenue|vp.?sales|head.?of.?sales|sales.?director|director.?of.?sales)\b/,
-      marketing: /\b(cmo|vp.?market|head.?of.?market|marketing.?director|director.?of.?market)\b/,
-      product: /\b(cpo|chief.?product|vp.?product|head.?of.?product|director.?of.?product)\b/,
-      hr: /\b(chro|vp.?people|head.?of.?people|head.?of.?talent|head.?of.?hr|vp.?talent|director.?of.?talent|head.?of.?recruit)\b/,
-      design: /\b(head.?of.?design|design.?director|vp.?design|creative.?director)\b/,
-      data: /\b(chief.?data|head.?of.?data|vp.?data|director.?of.?data|head.?of.?analytics)\b/,
-      finance: /\b(cfo|vp.?finance|head.?of.?finance|controller|director.?of.?finance)\b/,
-      pm: /\b(vp.?engineer|head.?of.?engineer|director.?of.?engineer|head.?of.?product)\b/,
-      cs: /\b(vp.?customer|head.?of.?customer|director.?of.?customer|head.?of.?success)\b/,
-      operations: /\b(coo|chief.?operating|vp.?operations|head.?of.?operations)\b/,
-      general: /\b(ceo|founder|co.?founder|cto|coo)\b/
+  private getTitlePriority(jobFunction: string): RegExp[] {
+    const priorities: Record<string, RegExp[]> = {
+      engineering: [
+        /head of engineering|vp.?engineering|vp of engineering|cto/,
+        /director of engineering|engineering manager/,
+        /head of talent|head of recruiting|vp talent/,
+        /co-?founder|founder|ceo/
+      ],
+      sales: [
+        /head of sales|vp.?sales|cro|chief revenue/,
+        /sales director|director of sales/,
+        /head of revenue|head of growth/,
+        /co-?founder|founder|ceo/
+      ],
+      marketing: [
+        /head of marketing|vp.?marketing|cmo/,
+        /marketing director|director of marketing|head of growth/,
+        /co-?founder|founder|ceo/
+      ],
+      product: [
+        /head of product|vp.?product|cpo/,
+        /director of product/,
+        /cto|co-?founder|founder|ceo/
+      ],
+      hr: [
+        /head of people|head of talent|head of hr|vp.?people|chro/,
+        /head of recruiting|director of talent|vp.?talent/,
+        /director of recruiting|talent acquisition/,
+        /coo|co-?founder|founder|ceo/
+      ],
+      design: [
+        /head of design|vp.?design|creative director/,
+        /design director/,
+        /head of product|vp.?product|cto/,
+        /co-?founder|founder|ceo/
+      ],
+      data: [
+        /head of data|vp.?data|head of analytics/,
+        /director of data/,
+        /cto|head of engineering/,
+        /co-?founder|founder|ceo/
+      ],
+      finance: [
+        /cfo|head of finance|vp.?finance/,
+        /controller|director of finance/,
+        /coo|co-?founder|founder|ceo/
+      ],
+      pm: [
+        /head of product|vp.?product|director of product/,
+        /head of engineering|vp.?engineering|cto/,
+        /co-?founder|founder|ceo/
+      ],
+      cs: [
+        /head of customer success|vp.?customer|director of customer/,
+        /head of operations|vp.?operations|coo/,
+        /co-?founder|founder|ceo/
+      ],
+      operations: [
+        /coo|head of operations|vp.?operations|chief of staff/,
+        /co-?founder|founder|ceo/
+      ],
+      general: [
+        /ceo|co-?founder|founder/,
+        /cto|coo|cfo/,
+        /head of|vp|director/
+      ]
     };
 
-    if (tier1Map[jobFunction]?.test(title)) score += 100;
-
-    // Tier 2: Hiring-adjacent authority (60 pts)
-    const tier2Map: Record<string, RegExp> = {
-      engineering: /\b(head.?of.?talent|head.?of.?recruit|vp.?talent|director.?of.?recruit|talent.?acquisition)\b/,
-      sales: /\b(head.?of.?talent|vp.?operations|chief.?operating|head.?of.?revenue)\b/,
-      marketing: /\b(head.?of.?growth|ceo|founder|co.?founder)\b/,
-      product: /\b(cto|vp.?engineer|ceo|founder)\b/,
-      hr: /\b(coo|ceo|founder|co.?founder|head.?of.?operations)\b/,
-      design: /\b(cto|vp.?product|head.?of.?product|ceo)\b/,
-      data: /\b(cto|vp.?engineer|head.?of.?engineer)\b/,
-      finance: /\b(ceo|coo|founder|co.?founder)\b/,
-      pm: /\b(cto|vp.?product|head.?of.?product)\b/,
-      cs: /\b(coo|head.?of.?operations|vp.?operations|ceo)\b/,
-      operations: /\b(ceo|founder|co.?founder|cfo)\b/,
-      general: /\b(vp|head.?of|director)\b/
-    };
-
-    if (tier2Map[jobFunction]?.test(title)) score += 60;
-
-    // Tier 3: C-suite / founder catch-all (40 pts)
-    if (/\b(ceo|cto|coo|cfo|cmo|cro|cpo|founder|co.?founder)\b/.test(title)) score += 40;
-
-    // Seniority bonus
-    if (/\b(chief|c-suite|ceo|cto|coo|cfo)\b/.test(title)) score += 20;
-    if (/\b(vp|vice.?president)\b/.test(title)) score += 15;
-    if (/\b(head.?of|director)\b/.test(title)) score += 10;
-    if (/\b(manager|lead)\b/.test(title)) score += 5;
-
-    // Penalty: irrelevant function (e.g., HR person for engineering role gets less)
-    if (jobFunction === 'engineering' && /\b(marketing|sales|finance|legal)\b/.test(title)) score -= 30;
-    if (jobFunction === 'sales' && /\b(engineering|developer|architect)\b/.test(title)) score -= 30;
-    if (jobFunction === 'marketing' && /\b(engineering|developer|finance)\b/.test(title)) score -= 30;
-
-    return score;
+    return priorities[jobFunction] || priorities.general;
   }
 
   private getCampaignForLead(lead: MergedLead): { id: string; region: string; timezone: string } {
