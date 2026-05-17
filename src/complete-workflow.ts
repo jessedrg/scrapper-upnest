@@ -1279,47 +1279,50 @@ class CompleteWorkflowManager {
       let jobs: JobPost[] = [];
       const todaysRuns = await this.getReusableJobsRun();
 
+      // How many regions can we still scrape? Each today's run = 1 region already done
+      let regionsAlreadyDone = 0;
+
       if (todaysRuns.length > 0) {
         const totalItems = todaysRuns.reduce((sum, r) => sum + r.itemCount, 0);
         console.log(`   ♻️  Found ${todaysRuns.length} run(s) from today with ${totalItems} total raw jobs`);
-
-        if (totalItems >= this.MIN_JOBS_TARGET) {
-          console.log(`   ✅ Already have ${totalItems} raw jobs — reusing all datasets (no new Apify runs needed)`);
-          // Fetch and merge all datasets
-          for (const run of todaysRuns) {
-            console.log(`   📥 Fetching dataset (${run.itemCount} items)...`);
-            const itemsResp = await axios.get(
-              `https://api.apify.com/v2/datasets/${run.datasetId}/items`,
-              { params: { token: this.apifyToken, format: 'json' }, timeout: 120000 }
-            );
-            const rawJobs = Array.isArray(itemsResp.data) ? itemsResp.data : [];
-            const filtered = this.filterRawJobs(rawJobs);
-            jobs = [...jobs, ...filtered];
-          }
-          console.log(`   🔍 After filtering all datasets: ${jobs.length} jobs`);
-        } else {
-          console.log(`   📈 Only ${totalItems} raw jobs from today — will scrape more regions`);
+        console.log(`   ✅ Reusing all ${todaysRuns.length} datasets...`);
+        for (const run of todaysRuns) {
+          console.log(`   📥 Fetching dataset (${run.itemCount} items)...`);
+          const itemsResp = await axios.get(
+            `https://api.apify.com/v2/datasets/${run.datasetId}/items`,
+            { params: { token: this.apifyToken, format: 'json' }, timeout: 120000 }
+          );
+          const rawJobs = Array.isArray(itemsResp.data) ? itemsResp.data : [];
+          const filtered = this.filterRawJobs(rawJobs);
+          jobs = [...jobs, ...filtered];
         }
+        console.log(`   🔍 After filtering all datasets: ${jobs.length} jobs`);
+        regionsAlreadyDone = todaysRuns.length; // each run ≈ 1 region
+      } else {
+        // No reusable runs — scrape primary region
+        jobs = await this.scrapeJobs();
+        regionsAlreadyDone = 1;
       }
 
-      // If not enough from reused runs, scrape new regions
-      if (jobs.length < this.MIN_JOBS_TARGET) {
-        if (jobs.length === 0) {
-          // No reused data — scrape primary region
-          jobs = await this.scrapeJobs();
+      // Scrape remaining regions if below target (skip regions already done)
+      // Skip `regionsAlreadyDone` calls to getNextRegion since those regions already have runs
+      let skipped = 0;
+      while (jobs.length < this.MIN_JOBS_TARGET) {
+        const nextRegion = this.getNextRegion();
+        if (!nextRegion) {
+          console.log(`   ⚠️  All regions exhausted. Total jobs: ${jobs.length}`);
+          break;
         }
-
-        while (jobs.length < this.MIN_JOBS_TARGET) {
-          const nextRegion = this.getNextRegion();
-          if (!nextRegion) {
-            console.log(`   ⚠️  All regions exhausted. Total jobs: ${jobs.length}`);
-            break;
-          }
-          console.log(`\n   📈 Only ${jobs.length} jobs. Adding ${nextRegion.label}...`);
-          const extraJobs = await this.scrapeRegion(nextRegion);
-          jobs = [...jobs, ...extraJobs];
-          console.log(`   ✅ Total jobs now: ${jobs.length}`);
+        // Skip regions that likely already have runs from today
+        if (skipped < regionsAlreadyDone - 1) { // -1 because primary region is already in todayRegions
+          console.log(`   ⏭️  Skipping ${nextRegion.label} (likely already in today's datasets)`);
+          skipped++;
+          continue;
         }
+        console.log(`\n   📈 Only ${jobs.length} jobs. Adding ${nextRegion.label}...`);
+        const extraJobs = await this.scrapeRegion(nextRegion);
+        jobs = [...jobs, ...extraJobs];
+        console.log(`   ✅ Total jobs now: ${jobs.length}`);
       }
 
       console.log(`\n🌍 Total: ${jobs.length} filtered jobs`);
