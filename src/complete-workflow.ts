@@ -311,7 +311,7 @@ class CompleteWorkflowManager {
     return this.CAMPAIGNS[key];
   }
 
-  async scrapeJobs(urls?: string[], count: number = 15000): Promise<JobPost[]> {
+  async scrapeJobs(urls?: string[], count: number = 15000, forceNewRun: boolean = false): Promise<JobPost[]> {
     console.log('📊 Step 1: Scraping LinkedIn jobs...');
 
     if (!urls) {
@@ -326,8 +326,8 @@ class CompleteWorkflowManager {
 
     let datasetId: string;
 
-    // Check for a reusable run from today
-    const reusable = await this.getReusableJobsRun();
+    // Check for a reusable run from today (only for primary region, not forced new runs)
+    const reusable = !forceNewRun ? await this.getReusableJobsRun() : null;
     if (reusable) {
       console.log(`   ♻️  Found today's run with ${reusable.itemCount} jobs — reusing dataset`);
       datasetId = reusable.datasetId;
@@ -476,10 +476,8 @@ class CompleteWorkflowManager {
    */
   private async scrapeRegion(region: typeof this.REGION_SCHEDULE[number]): Promise<JobPost[]> {
     console.log(`   🌍 Scraping additional region: ${region.label} (${region.urls.length} URLs)...`);
-    const originalRegions = this.todayRegions;
-    // Temporarily set as current region for scrapeJobs internals
-    const jobs = await this.scrapeJobs(region.urls);
-    this.todayRegions = originalRegions;
+    // Force a NEW actor run — do not reuse the primary region's run
+    const jobs = await this.scrapeJobs(region.urls, 15000, true);
     return jobs;
   }
 
