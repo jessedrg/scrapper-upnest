@@ -37,6 +37,7 @@ interface MergedLead {
   openRoles_count?: string;
   jobPostUrls?: string[];
   postedDate?: string;
+  sourceRegion?: 'us' | 'europe' | 'apac' | 'remote';
 }
 
 function truncate(s: string | undefined, n: number): string {

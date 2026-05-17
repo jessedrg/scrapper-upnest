@@ -34,6 +34,7 @@ interface JobPost {
   companyEmployeesCount?: string;
   seniorityLevel?: string;
   jobFunction?: string;
+  sourceRegion?: 'us' | 'europe' | 'apac' | 'remote';
 }
 
 interface DecisionMaker {
@@ -121,7 +122,7 @@ class CompleteWorkflowManager {
 
   // ─── POLLING HELPER (with retry on transient errors) ───────────────────────
 
-  private async pollRunStatus(runId: string, label: string, maxWaitMs: number = 1800000): Promise<void> {
+  private async pollRunStatus(runId: string, label: string, maxWaitMs: number = 2700000): Promise<void> {
     const pollInterval = 10000;
     let elapsed = 0;
 
@@ -319,7 +320,7 @@ class CompleteWorkflowManager {
     { key: 'remote', label: 'Remote', urls: REMOTE_URLS }
   ];
 
-  private readonly MIN_JOBS_TARGET = 13000;
+  private readonly MIN_JOBS_TARGET = 9500;
   private todayRegions: Array<typeof this.REGION_SCHEDULE[number]> = [];
 
   private getPrimaryRegion(): typeof this.REGION_SCHEDULE[number] {
@@ -347,13 +348,14 @@ class CompleteWorkflowManager {
     return this.CAMPAIGNS[key];
   }
 
-  async scrapeJobs(urls?: string[], count: number = 15000): Promise<JobPost[]> {
+  async scrapeJobs(urls?: string[], count: number = 15000, regionKey?: 'us' | 'europe' | 'apac' | 'remote'): Promise<JobPost[]> {
     console.log('📊 Step 1: Scraping LinkedIn jobs...');
 
     if (!urls) {
       const region = this.getTodayRegion();
       const campaign = this.CAMPAIGNS[region.key];
       urls = region.urls;
+      regionKey = region.key;
       console.log(`🌍 Primary region: ${region.label} (${campaign.timezone}) — ${urls.length} URLs`);
       console.log(`   🎯 Target: ${this.MIN_JOBS_TARGET}+ jobs`);
     } else {
@@ -362,7 +364,12 @@ class CompleteWorkflowManager {
 
     let datasetId: string;
 
-    {
+    // Try to reuse a successful run from today with matching URL count
+    const reusable = await this.getReusableJobsRun(urls.length);
+    if (reusable) {
+      console.log(`   ♻️  Reusing today's run with ${reusable.itemCount} jobs`);
+      datasetId = reusable.datasetId;
+    } else {
       // Start a new actor run
       const startResponse = await axios.post(
         `https://api.apify.com/v2/acts/${this.JOBS_ACTOR}/runs`,
@@ -494,7 +501,8 @@ class CompleteWorkflowManager {
       companyDescription: job.companyDescription || '',
       companyEmployeesCount: job.companyEmployeesCount ? String(job.companyEmployeesCount) : '',
       seniorityLevel: job.seniorityLevel || '',
-      jobFunction: job.jobFunction || ''
+      jobFunction: job.jobFunction || '',
+      sourceRegion: regionKey
     }));
 
     await this.saveToCSV(processedJobs, 'linkedin_jobs.csv');
@@ -507,7 +515,7 @@ class CompleteWorkflowManager {
    */
   private async scrapeRegion(region: typeof this.REGION_SCHEDULE[number]): Promise<JobPost[]> {
     console.log(`   🌍 Scraping additional region: ${region.label} (${region.urls.length} URLs)...`);
-    const jobs = await this.scrapeJobs(region.urls);
+    const jobs = await this.scrapeJobs(region.urls, 15000, region.key);
     return jobs;
   }
 
@@ -944,7 +952,8 @@ class CompleteWorkflowManager {
       personCity: decisionMaker.location?.split(',').map(s => s.trim())[0],
       personCountry: decisionMaker.location?.split(',').map(s => s.trim()).pop(),
       jobPostUrls: companyJobs.map(job => job.linkedInUrl).filter(Boolean) as string[],
-      postedDate: companyJobs[0]?.posted_date
+      postedDate: companyJobs[0]?.posted_date,
+      sourceRegion: companyJobs[0]?.sourceRegion
     };
   }
 
@@ -965,18 +974,21 @@ class CompleteWorkflowManager {
   }
 
   private getCampaignForLead(lead: MergedLead): { id: string; region: string; timezone: string } {
-    // If only 1 region used today, all leads go to that campaign
-    if (this.todayRegions.length <= 1) {
-      return this.CAMPAIGNS[this.todayRegions[0]?.key || 'us'];
-    }
-    // Multiple regions: infer from job location
     const loc = `${lead.openRoles_locations || ''} ${lead.personCountry || ''}`.toLowerCase();
-    if (/remote|anywhere|distributed/.test(loc)) return this.CAMPAIGNS.remote;
-    if (/united states|usa|\bus\b|new york|california|texas|florida|chicago|boston|seattle|austin|denver/.test(loc)) return this.CAMPAIGNS.us;
-    if (/united kingdom|uk|germany|france|netherlands|spain|italy|sweden|denmark|finland|norway|switzerland|ireland|london|berlin|paris|amsterdam/.test(loc)) return this.CAMPAIGNS.europe;
-    if (/singapore|japan|south korea|hong kong|india|australia|new zealand|taiwan|malaysia|tokyo|sydney/.test(loc)) return this.CAMPAIGNS.apac;
-    // Fallback to primary region
-    return this.CAMPAIGNS[this.todayRegions[0].key];
+
+    if (/remote|anywhere|distributed|work from home|wfh/.test(loc)) return this.CAMPAIGNS.remote;
+
+    if (/united states|usa|\bus\b|new york|california|texas|florida|chicago|boston|seattle|austin|denver|san francisco|los angeles|atlanta|washington|virginia|colorado|massachusetts|oregon|arizona|north carolina|georgia|illinois|ohio|pennsylvania|michigan|new jersey|minnesota|maryland|tennessee|missouri|indiana|wisconsin|connecticut|utah|nevada|hawaii/.test(loc)) return this.CAMPAIGNS.us;
+
+    if (/united kingdom|uk|great britain|germany|france|netherlands|spain|italy|sweden|denmark|finland|norway|switzerland|ireland|belgium|portugal|poland|austria|czech|romania|hungary|greece|croatia|slovakia|slovenia|luxembourg|estonia|latvia|lithuania|bulgaria|serbia|ukraine|london|berlin|paris|amsterdam|munich|hamburg|barcelona|madrid|milan|rome|vienna|prague|warsaw|lisbon|dublin|brussels|copenhagen|stockholm|oslo|helsinki|zurich|geneva|manchester|birmingham|edinburgh|glasgow|bristol|leeds|cambridge|oxford|cologne|frankfurt|düsseldorf|stuttgart|lyon|marseille|toulouse|rotterdam|eindhoven|utrecht|antwerp|ghent|porto|krakow|wroclaw|budapest|bucharest/.test(loc)) return this.CAMPAIGNS.europe;
+
+    if (/singapore|japan|south korea|hong kong|india|australia|new zealand|taiwan|malaysia|indonesia|philippines|thailand|vietnam|china|bangladesh|sri lanka|pakistan|myanmar|cambodia|tokyo|sydney|melbourne|bangalore|mumbai|delhi|hyderabad|chennai|pune|kolkata|seoul|shanghai|beijing|shenzhen|guangzhou|taipei|jakarta|bangkok|kuala lumpur|ho chi minh|manila|hanoi|auckland|wellington|osaka|fukuoka|perth|brisbane|adelaide/.test(loc)) return this.CAMPAIGNS.apac;
+
+    // Fallback: use sourceRegion if available, otherwise primary region
+    if (lead.sourceRegion && this.CAMPAIGNS[lead.sourceRegion]) {
+      return this.CAMPAIGNS[lead.sourceRegion];
+    }
+    return this.CAMPAIGNS[this.todayRegions[0]?.key || 'us'];
   }
 
   /**
