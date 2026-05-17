@@ -237,14 +237,15 @@ class CompleteWorkflowManager {
   }
 
   /**
-   * Check if there's a successful Jobs Scraper run from today we can reuse
+   * Check if there's a successful Jobs Scraper run from today we can reuse.
+   * Only reuses if the run's input URL count matches what we'd send (prevents cross-region reuse).
    */
-  private async getReusableJobsRun(): Promise<{ datasetId: string; itemCount: number } | null> {
+  private async getReusableJobsRun(expectedUrlCount?: number): Promise<{ datasetId: string; itemCount: number } | null> {
     try {
       const resp = await axios.get(
         `https://api.apify.com/v2/acts/${this.JOBS_ACTOR}/runs`,
         {
-          params: { token: this.apifyToken, limit: 5, desc: true, status: 'SUCCEEDED' },
+          params: { token: this.apifyToken, limit: 10, desc: true, status: 'SUCCEEDED' },
           timeout: 15000
         }
       );
@@ -254,16 +255,33 @@ class CompleteWorkflowManager {
 
       for (const run of runs) {
         const runDate = (run.finishedAt || run.startedAt || '').slice(0, 10);
-        if (runDate === today && run.defaultDatasetId) {
-          // Verify it has items
-          const dsResp = await axios.get(
-            `https://api.apify.com/v2/datasets/${run.defaultDatasetId}`,
-            { params: { token: this.apifyToken }, timeout: 15000 }
-          );
-          const itemCount = dsResp.data?.data?.itemCount || 0;
-          if (itemCount > 0) {
-            return { datasetId: run.defaultDatasetId, itemCount };
+        if (runDate !== today || !run.defaultDatasetId) continue;
+
+        // If we know expected URL count, verify the run used same input size
+        if (expectedUrlCount && run.id) {
+          try {
+            const inputResp = await axios.get(
+              `https://api.apify.com/v2/actor-runs/${run.id}/input`,
+              { params: { token: this.apifyToken }, timeout: 10000 }
+            );
+            const inputUrls = inputResp.data?.urls || inputResp.data?.startUrls || [];
+            const inputCount = Array.isArray(inputUrls) ? inputUrls.length : 0;
+            if (inputCount > 0 && inputCount !== expectedUrlCount) {
+              continue; // Different URL set, skip this run
+            }
+          } catch {
+            // If we can't read input, skip URL count validation
           }
+        }
+
+        // Verify it has items
+        const dsResp = await axios.get(
+          `https://api.apify.com/v2/datasets/${run.defaultDatasetId}`,
+          { params: { token: this.apifyToken }, timeout: 15000 }
+        );
+        const itemCount = dsResp.data?.data?.itemCount || 0;
+        if (itemCount > 0) {
+          return { datasetId: run.defaultDatasetId, itemCount };
         }
       }
     } catch (err: any) {
@@ -327,7 +345,7 @@ class CompleteWorkflowManager {
     let datasetId: string;
 
     // Check for a reusable run from today (only for primary region, not forced new runs)
-    const reusable = !forceNewRun ? await this.getReusableJobsRun() : null;
+    const reusable = !forceNewRun ? await this.getReusableJobsRun(urls.length) : null;
     if (reusable) {
       console.log(`   ♻️  Found today's run with ${reusable.itemCount} jobs — reusing dataset`);
       datasetId = reusable.datasetId;
