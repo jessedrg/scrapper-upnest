@@ -391,6 +391,34 @@ class CompleteWorkflowManager {
   }
 
   /**
+   * Infer which region a dataset belongs to by sampling job locations.
+   * Checks the first 200 jobs and votes on the most common region.
+   */
+  private inferRegionFromJobs(rawJobs: any[]): 'us' | 'europe' | 'apac' | 'remote' {
+    const sample = rawJobs.slice(0, 200);
+    const votes = { us: 0, europe: 0, apac: 0, remote: 0 };
+
+    for (const job of sample) {
+      const loc = (job.location || '').toLowerCase();
+
+      if (/remote|anywhere|distributed|work from home/i.test(loc) && !/(united states|usa|germany|uk|india|singapore|france|australia)/i.test(loc)) {
+        votes.remote++;
+      } else if (/united states|usa|\bus\b|new york|california|texas|florida|chicago|boston|seattle|austin|denver|san francisco|los angeles|atlanta|washington|virginia|colorado|massachusetts|oregon|arizona|north carolina|georgia|illinois|ohio|pennsylvania|michigan|new jersey|minnesota|maryland|tennessee|missouri|indiana|wisconsin|connecticut|utah|nevada|hawaii/i.test(loc)) {
+        votes.us++;
+      } else if (/united kingdom|uk|germany|france|netherlands|spain|italy|sweden|denmark|finland|norway|switzerland|ireland|belgium|portugal|poland|austria|czech|romania|hungary|greece|croatia|london|berlin|paris|amsterdam|munich|barcelona|madrid|milan|vienna|prague|warsaw|lisbon|dublin|brussels|copenhagen|stockholm|oslo|helsinki|zurich/i.test(loc)) {
+        votes.europe++;
+      } else if (/singapore|japan|south korea|hong kong|india|australia|new zealand|taiwan|malaysia|indonesia|philippines|thailand|vietnam|china|tokyo|sydney|melbourne|bangalore|mumbai|delhi|hyderabad|chennai|pune|seoul|shanghai|beijing|taipei|jakarta|bangkok/i.test(loc)) {
+        votes.apac++;
+      }
+    }
+
+    const sorted = Object.entries(votes).sort((a, b) => b[1] - a[1]);
+    const winner = sorted[0][0] as 'us' | 'europe' | 'apac' | 'remote';
+    console.log(`      📊 Location votes: US=${votes.us}, Europe=${votes.europe}, APAC=${votes.apac}, Remote=${votes.remote} → ${winner}`);
+    return winner;
+  }
+
+  /**
    * Filter raw Apify jobs: remove large companies, agencies, bad keywords/industries.
    * Returns processed JobPost[] ready for the pipeline.
    */
@@ -1278,7 +1306,7 @@ class CompleteWorkflowManager {
       // Step 1: Check for reusable runs from today first
       let jobs: JobPost[] = [];
       const todaysRuns = await this.getReusableJobsRun();
-      const consumedDatasetIds = new Set<string>();
+      const coveredRegions = new Set<string>(); // regions already scraped today
 
       if (todaysRuns.length > 0) {
         const totalItems = todaysRuns.reduce((sum, r) => sum + r.itemCount, 0);
@@ -1291,43 +1319,37 @@ class CompleteWorkflowManager {
             { params: { token: this.apifyToken, format: 'json' }, timeout: 120000 }
           );
           const rawJobs = Array.isArray(itemsResp.data) ? itemsResp.data : [];
-          const filtered = this.filterRawJobs(rawJobs);
+          // Infer region from job locations
+          const inferredRegion = this.inferRegionFromJobs(rawJobs);
+          console.log(`   🌍 Inferred region: ${inferredRegion}`);
+          coveredRegions.add(inferredRegion);
+          const filtered = this.filterRawJobs(rawJobs, inferredRegion as any);
           jobs = [...jobs, ...filtered];
-          consumedDatasetIds.add(run.datasetId);
         }
         console.log(`   🔍 After filtering all datasets: ${jobs.length} jobs`);
+        console.log(`   🌍 Regions already covered: ${[...coveredRegions].join(', ')}`);
       } else {
         // No reusable runs — scrape primary region
         jobs = await this.scrapeJobs();
+        coveredRegions.add(region.key);
       }
 
-      // Scrape remaining regions if below target
+      // Scrape remaining regions if below target (skip already covered ones)
       while (jobs.length < this.MIN_JOBS_TARGET) {
         const nextRegion = this.getNextRegion();
         if (!nextRegion) {
           console.log(`   ⚠️  All regions exhausted. Total jobs: ${jobs.length}`);
           break;
         }
-        // Check if there's an unconsumed dataset from today for this region's URL count
-        const unconsumed = todaysRuns.find(r => !consumedDatasetIds.has(r.datasetId));
-        if (unconsumed) {
-          console.log(`   ♻️  Found unconsumed dataset for ${nextRegion.label} (${unconsumed.itemCount} items) — reusing`);
-          const itemsResp = await axios.get(
-            `https://api.apify.com/v2/datasets/${unconsumed.datasetId}/items`,
-            { params: { token: this.apifyToken, format: 'json' }, timeout: 120000 }
-          );
-          const rawJobs = Array.isArray(itemsResp.data) ? itemsResp.data : [];
-          const filtered = this.filterRawJobs(rawJobs, nextRegion.key);
-          jobs = [...jobs, ...filtered];
-          consumedDatasetIds.add(unconsumed.datasetId);
-          this.todayRegions.push(nextRegion);
-          console.log(`   ✅ Total jobs now: ${jobs.length}`);
-        } else {
-          console.log(`\n   📈 Only ${jobs.length} jobs. Scraping ${nextRegion.label}...`);
-          const extraJobs = await this.scrapeRegion(nextRegion);
-          jobs = [...jobs, ...extraJobs];
-          console.log(`   ✅ Total jobs now: ${jobs.length}`);
+        if (coveredRegions.has(nextRegion.key)) {
+          console.log(`   ⏭️  Skipping ${nextRegion.label} (already in today's datasets)`);
+          continue;
         }
+        console.log(`\n   📈 Only ${jobs.length} jobs. Scraping ${nextRegion.label}...`);
+        const extraJobs = await this.scrapeRegion(nextRegion);
+        jobs = [...jobs, ...extraJobs];
+        coveredRegions.add(nextRegion.key);
+        console.log(`   ✅ Total jobs now: ${jobs.length}`);
       }
 
       console.log(`\n🌍 Total: ${jobs.length} filtered jobs`);
