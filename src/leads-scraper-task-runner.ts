@@ -70,9 +70,12 @@ export class LeadsScraperTaskRunner extends ApifyTaskManager {
    * Update company domains
    */
   async updateCompanyDomains(domains: string[]): Promise<void> {
-    const cleanDomains = domains.map(d => d.replace(/^https?:\/\//, '').split('/')[0]);
-    await this.updateConfig({ companyDomainIncludes: cleanDomains });
-    console.log(`Updated company domains with ${cleanDomains.length} entries`);
+    const fullDomains = domains.map(d => {
+      const clean = d.replace(/^https?:\/\//, '').replace(/^www\./, '').split('/')[0].toLowerCase().trim();
+      return `https://${clean}`;
+    });
+    await this.updateConfig({ companyDomainIncludes: fullDomains });
+    console.log(`Updated company domains with ${fullDomains.length} entries`);
   }
 
   /**

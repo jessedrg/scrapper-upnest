@@ -208,12 +208,12 @@ class CompleteWorkflowManager {
    */
   private extractDomain(company: string, website?: string): string {
     if (website) {
-      return website.replace(/^https?:\/\//, '').split('/')[0];
-    }
-    if (company) {
-      return company.toLowerCase()
-        .replace(/[^a-z0-9\s]/g, '')
-        .replace(/\s+/g, '') + '.com';
+      return website
+        .replace(/^https?:\/\//, '')
+        .replace(/^www\./, '')
+        .split('/')[0]
+        .toLowerCase()
+        .trim();
     }
     return '';
   }
@@ -531,9 +531,15 @@ class CompleteWorkflowManager {
     
     const MAX_JOBS_PER_COMPANY = 3;
     let capped = 0;
+    let skippedNoDomain = 0;
     jobs.forEach(job => {
       const domain = this.extractDomain(job.company, job.companyWebsite);
       
+      if (!domain) {
+        skippedNoDomain++;
+        return;
+      }
+
       if (!domainMap.has(domain)) {
         domainMap.set(domain, []);
       }
@@ -546,7 +552,7 @@ class CompleteWorkflowManager {
       }
     });
 
-    console.log(`✅ Extracted ${domainMap.size} unique company domains (capped ${capped} excess jobs, max ${MAX_JOBS_PER_COMPANY}/company)`);
+    console.log(`✅ Extracted ${domainMap.size} unique company domains (capped ${capped} excess, skipped ${skippedNoDomain} without website, max ${MAX_JOBS_PER_COMPANY}/company)`);
     return domainMap;
   }
 
