@@ -301,7 +301,7 @@ class CompleteWorkflowManager {
     { key: 'remote', label: 'Remote', urls: REMOTE_URLS }
   ];
 
-  private readonly MIN_JOBS_TARGET = 9500;
+  private readonly MIN_JOBS_TARGET = 15000;
   private todayRegions: Array<typeof this.REGION_SCHEDULE[number]> = [];
 
   private getPrimaryRegion(): typeof this.REGION_SCHEDULE[number] {
@@ -439,7 +439,7 @@ class CompleteWorkflowManager {
 
     const filteredJobs = rawJobs.filter((job: any) => {
       const empCount = parseInt(job.companyEmployeesCount || '0', 10);
-      if (empCount > 1000) { filteredOut.large++; return false; }
+      if (empCount > 1500) { filteredOut.large++; return false; }
 
       const companyLower = (job.companyName || '').toLowerCase().trim();
       const descLower = (job.companyDescription || '').toLowerCase();
@@ -501,17 +501,24 @@ class CompleteWorkflowManager {
     
     const domainMap = new Map<string, JobPost[]>();
     
+    const MAX_JOBS_PER_COMPANY = 3;
+    let capped = 0;
     jobs.forEach(job => {
       const domain = this.extractDomain(job.company, job.companyWebsite);
       
       if (!domainMap.has(domain)) {
         domainMap.set(domain, []);
       }
-      
-      domainMap.get(domain)!.push(job);
+
+      const existing = domainMap.get(domain)!;
+      if (existing.length < MAX_JOBS_PER_COMPANY) {
+        existing.push(job);
+      } else {
+        capped++;
+      }
     });
 
-    console.log(`✅ Extracted ${domainMap.size} unique company domains`);
+    console.log(`✅ Extracted ${domainMap.size} unique company domains (capped ${capped} excess jobs, max ${MAX_JOBS_PER_COMPANY}/company)`);
     return domainMap;
   }
 
@@ -1028,7 +1035,16 @@ class CompleteWorkflowManager {
   ): Promise<number> {
     console.log('🤖 Step 7+8: Generating emails & writing CSV incrementally...');
 
-    const limitedLeads = limit > 0 ? mergedLeads.slice(0, limit) : mergedLeads;
+    // Pre-deduplicate: keep only 1 lead per company to avoid skip spam
+    const seenCompanies = new Set<string>();
+    const uniqueLeads = mergedLeads.filter(lead => {
+      const key = lead.companyName.toLowerCase().trim();
+      if (seenCompanies.has(key)) return false;
+      seenCompanies.add(key);
+      return true;
+    });
+    console.log(`   🏢 Pre-dedup: ${mergedLeads.length} → ${uniqueLeads.length} leads (1 per company)`);
+    const limitedLeads = limit > 0 ? uniqueLeads.slice(0, limit) : uniqueLeads;
     const csvPath = path.join(this.TMP_DIR, 'instantly_campaign.csv');
     const outputDir = path.dirname(csvPath);
     if (!fs.existsSync(outputDir)) fs.mkdirSync(outputDir, { recursive: true });
