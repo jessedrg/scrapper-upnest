@@ -1407,8 +1407,9 @@ class CompleteWorkflowManager {
         first_name: record.firstName,
         last_name: record.lastName,
         company_name: record.companyName,
+        job_title: record.jobTitle,
+        website: dm?.linkedIn || '',
         custom_variables: {
-          jobTitle: record.jobTitle,
           linkedIn: record.linkedIn,
           email1_subject: record.email1_subject,
           email1_body: record.email1_body,
@@ -1432,11 +1433,14 @@ class CompleteWorkflowManager {
           'https://api.instantly.ai/api/v2/leads/add',
           {
             campaign_id: campaignId,
+            skip_if_in_workspace: false,
             leads: leads.map(lead => ({
               email: lead.email,
               first_name: lead.first_name,
               last_name: lead.last_name,
               company_name: lead.company_name,
+              job_title: lead.job_title,
+              website: lead.website,
               custom_variables: lead.custom_variables
             }))
           },
@@ -1450,7 +1454,7 @@ class CompleteWorkflowManager {
         );
 
         const data = response.data;
-        console.log(`✅ Instantly: ${data.leads_uploaded || leads.length} uploaded, ${data.duplicated_leads || 0} duplicates, ${data.invalid_email_count || 0} invalid`);
+        console.log(`✅ Instantly: ${data.leads_uploaded ?? 0}/${leads.length} uploaded, ${data.duplicated_leads || 0} dupes, ${data.skipped_count || 0} skipped, ${data.invalid_email_count || 0} invalid`);
         return; // Success, exit
       } catch (err: any) {
         const httpStatus = err?.response?.status;
