@@ -1434,6 +1434,7 @@ class CompleteWorkflowManager {
           {
             campaign_id: campaignId,
             skip_if_in_workspace: false,
+            verify_leads_emails: true,
             leads: leads.map(lead => ({
               email: lead.email,
               first_name: lead.first_name,
